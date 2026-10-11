@@ -28,6 +28,7 @@ import {
   TERRAIN_MAX_ZOOM,
   TERRAIN_TILES_URL,
 } from '../lib/constants'
+import { applyCleanBasemap } from '../lib/basemap'
 import { shadowOpacity, SUNLIGHT_COLOR, sunlightOpacity } from '../lib/overlay'
 import {
   buildingsFromFeatures,
@@ -296,6 +297,7 @@ export function MapView({
     }
 
     map.on('load', () => {
+      applyCleanBasemap(map as unknown as Parameters<typeof applyCleanBasemap>[0])
       map.addSource(SHADOW_SOURCE, { type: 'geojson', data: EMPTY })
       map.addLayer(
         {
