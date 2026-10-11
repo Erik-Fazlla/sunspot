@@ -24,6 +24,8 @@ export const MAX_PITCH = 85
  */
 export const TERRAIN_TILES_URL = 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'
 export const TERRAIN_MAX_ZOOM = 15
+/** Heights are drawn 1.5x so that city-scale relief (tens of metres) is readable. */
+export const TERRAIN_EXAGGERATION = 1.5
 export const TERRAIN_ATTRIBUTION =
   'Terrain: <a href="https://github.com/tilezen/joerd/blob/master/docs/attribution.md" target="_blank" rel="noreferrer">Mapzen, AWS Terrain Tiles</a>'
 
