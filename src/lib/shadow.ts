@@ -108,21 +108,38 @@ export function convexHull(points: Position[]): Ring {
 }
 
 /**
- * The parts whose union is the shadow of an extruded footprint: the footprint,
- * its translated copy (the roof outline projected on the ground) and one quad
- * per edge (the wall swept along the shadow direction).
+ * The parts whose union is the shadow of an extruded footprint: the footprint
+ * plus one quad per *leading* wall (a wall facing the way the shadow falls),
+ * swept along the shadow direction.
+ *
+ * Trailing walls and the translated roof outline add nothing: any shaded point
+ * outside the footprint lies on a line that leaves the footprint through a
+ * leading wall, so that wall's quad already covers it.
  */
 export function shadowPieces(ring: Ring, offset: GroundOffset): Ring[] {
-  const far = translateRing(ring, offset)
-  const pieces: Ring[] = [ring, far]
+  const orientation = Math.sign(signedArea(ring))
+  const pieces: Ring[] = [ring]
   for (let i = 0; i < ring.length - 1; i++) {
-    const quad: Ring = [ring[i], ring[i + 1], far[i + 1], far[i], ring[i]]
-    const area = signedArea(quad)
-    // Walls parallel to the shadow direction sweep no area.
-    if (Math.abs(area) < 1e-16) continue
-    pieces.push(area < 0 ? [...quad].reverse() : quad)
+    const a = ring[i]
+    const b = ring[i + 1]
+    // Cross product of the wall with the shadow direction: its sign, compared
+    // with the ring's winding, says which way the wall faces. Zero means the
+    // wall is parallel to the shadow and sweeps no area.
+    const cross = (b[0] - a[0]) * offset.dLat - (b[1] - a[1]) * offset.dLon
+    if (cross * orientation > -MIN_SWEPT_AREA_DEG2) continue
+    pieces.push([a, b, shift(b, offset), shift(a, offset), a])
   }
   return pieces
+}
+
+/** Roughly 1 cm x 1 cm in square degrees: anything smaller is rounding noise. */
+const MIN_SWEPT_AREA_DEG2 = 1e-14
+
+// About 1 cm. Short coordinates keep the GeoJSON handed to the map small.
+const round7 = (value: number) => Math.round(value * 1e7) / 1e7
+
+function shift([lon, lat]: Position, offset: GroundOffset): Position {
+  return [round7(lon + offset.dLon), round7(lat + offset.dLat)]
 }
 
 /**
@@ -147,11 +164,13 @@ export function buildShadowPolygon(
 
 /**
  * Cheap shadow geometry for drawing a whole viewport: the un-merged pieces as
- * one MultiPolygon. The map layer flattens overlaps, so no union is needed.
+ * one MultiPolygon (or the hull, for convex footprints). The map layer flattens
+ * overlaps, so no union is needed.
  */
 export function shadowRenderGeometry(building: Building, offset: GroundOffset): Polygon | MultiPolygon {
   if (building.convex) {
-    return { type: 'Polygon', coordinates: [convexHull([...building.ring, ...translateRing(building.ring, offset)])] }
+    const far = building.ring.map((position) => shift(position, offset))
+    return { type: 'Polygon', coordinates: [convexHull([...building.ring, ...far])] }
   }
   return { type: 'MultiPolygon', coordinates: shadowPieces(building.ring, offset).map((ring) => [ring]) }
 }
@@ -203,7 +222,8 @@ export function buildingsFromFeatures(features: TileFeature[]): Building[] {
       const key = `${ring.length}:${ring[0][0].toFixed(7)},${ring[0][1].toFixed(7)}:${ring[1][0].toFixed(7)}`
       if (seen.has(key)) continue
       seen.add(key)
-      buildings.push(makeBuilding(ring, buildingHeight(feature.properties), feature.id))
+      const rounded = ring.map(([lon, lat]) => [round7(lon), round7(lat)])
+      buildings.push(makeBuilding(rounded, buildingHeight(feature.properties), feature.id))
     }
   }
   return buildings

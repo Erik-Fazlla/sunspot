@@ -39,6 +39,7 @@ export default function App() {
   const [buildings, setBuildings] = useState<Building[]>([])
   const [panelOpen, setPanelOpen] = useState(true)
   const [showSunlight, setShowSunlight] = useStoredBoolean('sunspot:sunlight-overlay', false)
+  const [showTerrain, setShowTerrain] = useStoredBoolean('sunspot:terrain', false)
 
   // Weather and timezone follow the clicked point when there is one.
   const target = point ?? place
@@ -134,6 +135,7 @@ export default function App() {
         sunTime={sunTime}
         sunFactor={currentFactor ?? 1}
         showSunlight={showSunlight}
+        showTerrain={showTerrain}
         point={point}
         onPointSelect={(selected) => {
           setPoint(selected)
@@ -265,6 +267,13 @@ export default function App() {
                     checked: showSunlight,
                     onChange: setShowSunlight,
                   },
+                  {
+                    id: 'terrain',
+                    label: '3D terrain',
+                    hint: 'Hills and hillshade (shadows still assume flat ground)',
+                    checked: showTerrain,
+                    onChange: setShowTerrain,
+                  },
                 ]}
               />
             </section>
@@ -281,6 +290,14 @@ export default function App() {
               · weather by{' '}
               <a href="https://open-meteo.com" target="_blank" rel="noreferrer">
                 Open-Meteo
+              </a>{' '}
+              · terrain by{' '}
+              <a
+                href="https://github.com/tilezen/joerd/blob/master/docs/attribution.md"
+                target="_blank"
+                rel="noreferrer"
+              >
+                Mapzen, AWS Terrain Tiles
               </a>
             </footer>
           </div>

@@ -81,10 +81,17 @@ describe('geometry helpers', () => {
     expect(hull).toHaveLength(6)
   })
 
-  it('splits a shadow into the footprint, its translated copy and one quad per swept wall', () => {
+  it('splits a shadow into the footprint and one quad per leading wall', () => {
     const offset = shadowOffset(10, SUN_SOUTH_45, ORIGIN.lat)!
-    // The two walls parallel to the shadow direction sweep no area.
-    expect(shadowPieces(SQUARE, offset)).toHaveLength(2 + 2)
+    // Sun in the south: only the north wall faces the way the shadow falls.
+    expect(shadowPieces(SQUARE, offset)).toHaveLength(1 + 1)
+    // The winding of the footprint must not matter.
+    expect(shadowPieces([...SQUARE].reverse(), offset)).toHaveLength(1 + 1)
+    // Sun in the east: of the L-shape, only the long west wall leads.
+    expect(shadowPieces(L_SHAPE, shadowOffset(10, SUN_EAST_45, ORIGIN.lat)!)).toHaveLength(1 + 1)
+    // Sun in the west: the east wall and the notch wall both lead.
+    const sunWest = { altitudeRad: rad(45), bearingDeg: 270 }
+    expect(shadowPieces(L_SHAPE, shadowOffset(10, sunWest, ORIGIN.lat)!)).toHaveLength(1 + 2)
   })
 })
 
