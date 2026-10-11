@@ -28,13 +28,24 @@ import {
   TERRAIN_MAX_ZOOM,
   TERRAIN_TILES_URL,
 } from '../lib/constants'
+import type { MapViewState } from '../hooks/useStreetFurniture'
 import { applyCleanBasemap } from '../lib/basemap'
+import {
+  BENCH_COLORS,
+  benchFeatures,
+  benchStates,
+  castersNearBenches,
+  furnitureFeatures,
+  type BenchState,
+} from '../lib/furniture'
+import type { StreetFurniture } from '../lib/overpass'
 import { shadowOpacity, SUNLIGHT_COLOR, sunlightOpacity } from '../lib/overlay'
 import {
   buildingsFromFeatures,
   metersToDegrees,
   shadowOffset,
   shadowRenderGeometry,
+  shadowSweep,
   type Building,
 } from '../lib/shadow'
 import { getSunPosition, type SunPosition } from '../lib/sun'
@@ -63,6 +74,14 @@ const WORLD: FeatureCollection = {
   ],
 }
 const EMPTY: FeatureCollection = { type: 'FeatureCollection', features: [] }
+
+// Trees and lamps are extruded shapes; benches are flat dots coloured by sun or shade.
+const FURNITURE_SOURCE = 'sunspot-furniture'
+const FURNITURE_LAYER = 'sunspot-furniture'
+const BENCH_SOURCE = 'sunspot-benches'
+const BENCH_LAYER = 'sunspot-benches'
+const STREET_DETAILS_ATTRIBUTION =
+  'Street details © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap contributors</a> (ODbL)'
 
 // Elevation is loaded twice on purpose: MapLibre advises separate sources for
 // the 3D terrain mesh and the hillshade layer.
@@ -117,10 +136,16 @@ interface Props {
   showSunlight: boolean
   /** 3D terrain and hillshade from free elevation tiles. */
   showTerrain: boolean
+  /** Benches, trees and lamps to draw; null hides them. */
+  furniture: StreetFurniture | null
+  /** The trees of `furniture` as shadow casters (see lib/furniture.ts). */
+  treeCasters: Building[]
   point: LngLat | null
   onPointSelect: (point: LngLat) => void
   /** Called with every building in the loaded tiles whenever that set changes. */
   onBuildingsChange: (buildings: Building[]) => void
+  /** Called after the map settles on a new view. */
+  onViewChange: (view: MapViewState) => void
 }
 
 export function MapView({
@@ -129,9 +154,12 @@ export function MapView({
   sunFactor,
   showSunlight,
   showTerrain,
+  furniture,
+  treeCasters,
   point,
   onPointSelect,
   onBuildingsChange,
+  onViewChange,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MapLibreMap | null>(null)
@@ -140,15 +168,37 @@ export function MapView({
   const visibleRef = useRef<Building[]>([])
   const signatureRef = useRef('')
   const drawRef = useRef<() => void>(() => {})
-  const callbacksRef = useRef({ onPointSelect, onBuildingsChange })
+  const callbacksRef = useRef({ onPointSelect, onBuildingsChange, onViewChange })
+  const viewSignatureRef = useRef('')
+  // Street furniture as the draw loop needs it; `benchCasters[i]` are the casters near bench i.
+  const streetRef = useRef<{ benches: StreetFurniture['benches']; treeCasters: Building[]; benchCasters: Building[][] }>({
+    benches: [],
+    treeCasters: [],
+    benchCasters: [],
+  })
+  const linkBenchesRef = useRef<() => void>(() => {})
+  const benchSignatureRef = useRef('')
   const [hint, setHint] = useState<Hint>(null)
   const [ready, setReady] = useState(false)
   const appearanceRef = useRef({ sunFactor })
   const skyPhaseRef = useRef<SkyPhase | null>(null)
 
   useEffect(() => {
-    callbacksRef.current = { onPointSelect, onBuildingsChange }
+    callbacksRef.current = { onPointSelect, onBuildingsChange, onViewChange }
   })
+
+  // Pairs each bench with the buildings and trees close enough to shade it.
+  // Done when the view or the furniture changes, not on every slider step.
+  useEffect(() => {
+    linkBenchesRef.current = () => {
+      const street = streetRef.current
+      street.benchCasters = castersNearBenches(
+        street.benches,
+        [...visibleRef.current, ...street.treeCasters],
+        MAX_SHADOW_LENGTH_M,
+      )
+    }
+  }, [])
 
   // Redraws the shadow layer for the current view and `sunTime`.
   useEffect(() => {
@@ -178,8 +228,19 @@ export function MapView({
         map.setPaintProperty(HILLSHADE_LAYER, 'hillshade-illumination-direction', up ? Math.round(sun.bearingDeg) : 315)
       }
 
+      const street = streetRef.current
+      const benchSource = map.getSource<GeoJSONSource>(BENCH_SOURCE)
+      // Bench colours rarely change from one slider step to the next; skip the update when they have not.
+      const paintBenches = (states: BenchState[]) => {
+        const signature = `${street.benches.length}:${states.join('')}`
+        if (signature === benchSignatureRef.current) return
+        benchSignatureRef.current = signature
+        benchSource?.setData(benchFeatures(street.benches, states))
+      }
+
       if (map.getZoom() < MIN_SHADOW_ZOOM || sun.altitudeRad <= 0) {
         source.setData(EMPTY)
+        paintBenches(street.benches.map(() => (up ? 'unknown' : 'night')))
         setHint(sun.altitudeRad <= 0 ? 'night' : 'zoom')
         return
       }
@@ -190,7 +251,14 @@ export function MapView({
         if (!offset) continue
         features.push({ type: 'Feature', properties: {}, geometry: shadowRenderGeometry(building, offset) })
       }
+      // Trees go through the same pipeline: a canopy is a footprint that floats above the ground.
+      for (const tree of street.treeCasters) {
+        const sweep = shadowSweep(tree, sun, mapCenter.lat)
+        if (!sweep) continue
+        features.push({ type: 'Feature', properties: {}, geometry: shadowRenderGeometry(sweep, sweep.offset) })
+      }
       source.setData({ type: 'FeatureCollection', features })
+      paintBenches(benchStates(street.benches, street.benchCasters, sun))
       setHint(null)
     }
     drawRef.current()
@@ -281,6 +349,19 @@ export function MapView({
         visible = visible.sort((a, b) => distance(a) - distance(b)).slice(0, MAX_SHADOW_BUILDINGS)
       }
       visibleRef.current = visible
+      linkBenchesRef.current()
+
+      // Report the view, but only when it has really changed.
+      const view: MapViewState = {
+        zoom: map.getZoom(),
+        bounds: [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()],
+        center: [mapCenter.lng, mapCenter.lat],
+      }
+      const viewSignature = `${view.zoom.toFixed(1)}:${view.bounds.map((value) => value.toFixed(4)).join(',')}`
+      if (viewSignature !== viewSignatureRef.current) {
+        viewSignatureRef.current = viewSignature
+        callbacksRef.current.onViewChange(view)
+      }
       // Tile loads fire often; only tell React when the set really changed.
       const first = buildings[0]?.bbox[0] ?? 0
       const last = buildings[buildings.length - 1]?.bbox[0] ?? 0
@@ -327,6 +408,50 @@ export function MapView({
         },
         // Below the shadows, so shaded ground is covered by them.
         SHADOW_LAYER,
+      )
+      // Trees and lamps stand among the buildings, below the labels.
+      const layerIds = map.getStyle().layers.map((layer) => layer.id)
+      const aboveBuildings = layerIds[layerIds.indexOf(BUILDING_3D_LAYER) + 1]
+      map.addSource(FURNITURE_SOURCE, { type: 'geojson', data: EMPTY, attribution: STREET_DETAILS_ATTRIBUTION })
+      map.addLayer(
+        {
+          id: FURNITURE_LAYER,
+          type: 'fill-extrusion',
+          source: FURNITURE_SOURCE,
+          paint: {
+            'fill-extrusion-color': ['get', 'color'],
+            'fill-extrusion-height': ['get', 'height'],
+            'fill-extrusion-base': ['get', 'base'],
+            'fill-extrusion-opacity': 1,
+          },
+        },
+        aboveBuildings,
+      )
+      map.addSource(BENCH_SOURCE, { type: 'geojson', data: EMPTY })
+      map.addLayer(
+        {
+          id: BENCH_LAYER,
+          type: 'circle',
+          source: BENCH_SOURCE,
+          paint: {
+            'circle-radius': ['interpolate', ['linear'], ['zoom'], 15, 2.5, 17, 5, 19, 8],
+            'circle-color': [
+              'match',
+              ['get', 'state'],
+              'sun',
+              BENCH_COLORS.sun,
+              'shade',
+              BENCH_COLORS.shade,
+              'night',
+              BENCH_COLORS.night,
+              BENCH_COLORS.unknown,
+            ],
+            'circle-stroke-color': '#ffffff',
+            'circle-stroke-width': 1.5,
+            'circle-pitch-alignment': 'map',
+          },
+        },
+        aboveBuildings,
       )
       if (map.getLayer(BUILDING_3D_LAYER)) {
         // Near-opaque walls keep the shadow under a footprint from tinting the building itself.
@@ -376,6 +501,17 @@ export function MapView({
     const opacity = showSunlight ? sunlightOpacity(sunFactor, hint === null) : 0
     map.setPaintProperty(SUNLIGHT_LAYER, 'fill-opacity', opacity)
   }, [ready, showSunlight, sunFactor, hint])
+
+  // Street furniture: redraw the 3D shapes and re-link benches when the data changes.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!ready || !map) return
+    map.getSource<GeoJSONSource>(FURNITURE_SOURCE)?.setData(furniture ? furnitureFeatures(furniture) : EMPTY)
+    streetRef.current = { benches: furniture?.benches ?? [], treeCasters, benchCasters: [] }
+    benchSignatureRef.current = ''
+    linkBenchesRef.current()
+    drawRef.current()
+  }, [ready, furniture, treeCasters])
 
   // Terrain is optional: its tiles are only requested once it is switched on.
   useEffect(() => {
