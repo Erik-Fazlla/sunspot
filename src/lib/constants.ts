@@ -39,7 +39,7 @@ export const MAX_SHADOW_LENGTH_M = 300
 /** Below this zoom there are too many buildings on screen to shade smoothly. */
 export const MIN_SHADOW_ZOOM = 15
 /** Upper bound on buildings shaded per frame (nearest to the map centre win). */
-export const MAX_SHADOW_BUILDINGS = 2000
+export const MAX_SHADOW_BUILDINGS = 1500
 export const MOVE_DEBOUNCE_MS = 250
 
 /** What the planner opens on: tomorrow (in the timezone of the place), 14:00 to 15:00. */
