@@ -132,7 +132,10 @@ If the forecast has no direct radiation, or the clear-sky value is under
 sunFactor = 1 - cloud_cover / 100
 ```
 
-sunFactor is used in three places:
+sunFactor is used in four places:
+
+- **Weather label.** Sunny, Partly sunny or Overcast by sunFactor alone (see the
+  thresholds above).
 
 - **Effective sun minutes.** Each 5-minute sample counts `5 * sunFactor` if it
   is clear of shadows and 0 otherwise. Forty unshaded minutes at sunFactor 0.3
@@ -141,10 +144,26 @@ sunFactor is used in three places:
   quarter of full strength, so the geometry stays readable under cloud).
 - **Sunlight overlay.** Its opacity scales with sunFactor too.
 
-Open-Meteo reports radiation, precipitation and rain chance for the hour that
-*ends* at each timestamp, and cloud cover as a snapshot. The app reads the
-backward-looking values from the next row and averages cloud cover across the
-hour, so every number shown for "14:00" describes 14:00 to 15:00.
+### Which forecast row each number comes from
+
+Open-Meteo's hourly variables use two conventions, and `parseHourly` in
+`src/lib/openMeteo.ts` reads each one so that it describes the hour starting at
+the timestamp:
+
+| Variable | Open-Meteo convention | Row read for the hour starting at row i |
+| --- | --- | --- |
+| `cloud_cover` | instantaneous at the timestamp | i |
+| `temperature_2m` | instantaneous at the timestamp | i |
+| `direct_radiation` | mean of the preceding hour | i + 1 |
+| `shortwave_radiation` | mean of the preceding hour | i + 1 |
+| `precipitation` | sum of the preceding hour | i + 1 |
+| `precipitation_probability` | chance in the preceding hour | i + 1 |
+
+So for "14:00" the radiation and rain figures cover 14:00 to 15:00, while cloud
+cover and temperature are the values at 14:00. A unit test with a fixture pins
+every variable to its row. The 23:00 hour has no following row on a one-day
+request, so its radiation and rain are unknown and its sunFactor falls back to
+cloud cover.
 
 ### Map layers and look
 
@@ -168,16 +187,20 @@ the OpenFreeMap styles (landuse, points of interest, transit, 3D buildings).
 
 ### Weather label thresholds
 
-Defined and documented in `src/lib/weatherLabel.ts`, checked in this order:
+The label is derived from two numbers only: the hour's sunFactor (below) and its
+rain chance. The thresholds are constants in `src/lib/weatherLabel.ts`, checked
+in this order:
 
 | Label | Rule |
 | --- | --- |
-| Rainy | precipitation >= 0.2 mm in the hour, or rain chance >= 60% |
-| Overcast | cloud cover >= 80%, or in daylight under 15% of solar radiation is a direct beam |
-| Sunny | cloud cover <= 25% and, in daylight, at least half of solar radiation is a direct beam |
-| Partly sunny | everything else |
+| Rainy | rain chance >= 60% |
+| Sunny | sunFactor >= 0.7 |
+| Partly sunny | sunFactor >= 0.3 |
+| Overcast | anything lower |
 
-"In daylight" means total shortwave radiation of at least 20 W/m².
+Because the label and the "sun strength" figure come from the same sunFactor,
+they cannot disagree. Thin high cloud that covers the sky but lets most of the
+beam through counts as sunny, and the cloud cover percentage is shown separately.
 
 ### Time zones
 
@@ -251,8 +274,14 @@ a paid GitHub plan.
 - **sunFactor is an estimate.** The clear-sky model assumes clean air, and the
   forecast radiation is an hourly mean, so effective sun minutes are a guide,
   not a measurement.
-- **Terrain is visual.** Hills do not cast shadows, and with 3D terrain on,
-  building shadows on steep slopes can be partly clipped by the ground.
+- **Shadows assume flat ground, even with 3D terrain on.** The terrain layer
+  only changes how the map is drawn. Shadow length and direction are still
+  computed as if every building stood on a level plane at its own base, so on a
+  slope a real shadow would be shorter (uphill) or longer (downhill) than the
+  one shown. Hills themselves cast no shadow. The drawn shadows are flat sheets
+  lifted 1.5 m above the terrain, so on steep ground parts of them can sink
+  into, or float above, the surface. The spot check uses the same flat-ground
+  maths whether terrain is on or off.
 - **Tile edges.** A building cut by a tile boundary arrives in pieces. This does
   not change the drawn shadows but can slightly affect the click analysis at the
   seam.
