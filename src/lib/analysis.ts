@@ -4,7 +4,12 @@ import type { Forecast } from './openMeteo'
 import { isPointInShade, metersToDegrees, type Building } from './shadow'
 import { getSunPosition, type SunPosition } from './sun'
 import { zonedToUtc } from './time'
-import { weatherLabel, type HourWeather } from './weatherLabel'
+import {
+  PARTLY_SUNNY_SUN_FACTOR,
+  RAINY_PROBABILITY_PCT,
+  SUNNY_SUN_FACTOR,
+  type HourWeather,
+} from './weatherLabel'
 
 /** sun = direct sun, shade = a building blocks it, night = the sun is below the horizon. */
 export type SampleState = 'sun' | 'shade' | 'night'
@@ -104,8 +109,8 @@ export function effectiveSunMinutes(analysis: PointAnalysis, factorAt: (minutes:
 
 /**
  * One or two sentences combining the shadow result with the forecast. "Direct
- * sun" is only ever mentioned together with the cloud situation, because clear
- * of shadows is not the same as sunny. `effectiveMinutes` is null without a forecast.
+ * sun" is only ever mentioned together with the sun's strength under the
+ * forecast cloud, because clear of shadows is not the same as sunny. `effectiveMinutes` is null without a forecast.
  */
 export function combinedMessage(
   analysis: PointAnalysis,
@@ -129,23 +134,18 @@ export function combinedMessage(
   }
 
   const effective = Math.round(effectiveMinutes)
-  const clouds = hours.map((h) => h.cloudCover ?? 0)
-  const cloud = Math.round(clouds.reduce((a, b) => a + b, 0) / clouds.length)
-  const share = effectiveMinutes / clear
+  // Mean sunFactor over the unshaded minutes, judged on the same scale as the weather label.
+  const strength = effectiveMinutes / clear
+  const percent = Math.round(strength * 100)
   let tail: string
-  if (hours.map(weatherLabel).includes('Rainy')) {
+  if (hours.some((hour) => (hour.precipitationProbability ?? 0) >= RAINY_PROBABILITY_PCT)) {
     tail = `, but rain is likely: count on about ${effective} min of actual sunshine at best`
-  } else if (share >= 0.8 && cloud >= 60) {
-    // Thin high cloud: the sky is covered but the beam still gets through.
-    tail = `, and although cloud cover is ${cloud}% it is thin, so most of it is direct sun: about ${effective} min`
-  } else if (share >= 0.8) {
-    tail = `, and with ${cloud}% cloud cover nearly all of it is direct sun: about ${effective} min`
-  } else if (share >= 0.4 && cloud >= 80) {
-    tail = `, but under ${cloud}% cloud cover the sun is hazy: about ${effective} min of direct sun`
-  } else if (share >= 0.4) {
-    tail = `, but with ${cloud}% cloud cover the sun comes and goes: about ${effective} min of direct sun`
+  } else if (strength >= SUNNY_SUN_FACTOR) {
+    tail = `, and with the sun at ${percent}% of clear-sky strength nearly all of it is direct sun: about ${effective} min`
+  } else if (strength >= PARTLY_SUNNY_SUN_FACTOR) {
+    tail = `, but cloud cuts the sun to ${percent}% of clear-sky strength, so it comes and goes: about ${effective} min of direct sun`
   } else {
-    tail = `, but with ${cloud}% cloud cover the light is mostly diffuse: only about ${effective} min of direct sun`
+    tail = `, but cloud cuts the sun to ${percent}% of clear-sky strength, so the light is mostly diffuse: only about ${effective} min of direct sun`
   }
   return `${lead}${tail}.${nightNote}`
 }

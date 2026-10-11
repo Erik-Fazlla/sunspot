@@ -146,70 +146,77 @@ describe('effectiveSunMinutes', () => {
 })
 
 describe('combinedMessage', () => {
-  const cloudy = hour({ cloudCover: 80, directRadiation: 60, shortwaveRadiation: 300 })
+  const dry = [hour()]
 
-  it('reports both geometric and effective sun under heavy cloud', () => {
-    expect(combinedMessage(result(40, 20), [cloudy], 12)).toBe(
-      'Clear of building shadows for 40 of 60 min, but with 80% cloud cover the light is mostly diffuse: only about 12 min of direct sun.',
+  it('reports both geometric and effective sun when cloud leaves little beam', () => {
+    // 11 effective of 40 unshaded minutes is 28% strength, under the Partly sunny floor.
+    expect(combinedMessage(result(40, 20), dry, 11)).toBe(
+      'Clear of building shadows for 40 of 60 min, but cloud cuts the sun to 28% of clear-sky strength, so the light is mostly diffuse: only about 11 min of direct sun.',
     )
   })
 
-  it('says the sun comes and goes under broken cloud', () => {
-    expect(combinedMessage(result(40, 20), [hour({ cloudCover: 50 })], 24)).toBe(
-      'Clear of building shadows for 40 of 60 min, but with 50% cloud cover the sun comes and goes: about 24 min of direct sun.',
+  it('says the sun comes and goes at middling strength', () => {
+    expect(combinedMessage(result(40, 20), dry, 24)).toBe(
+      'Clear of building shadows for 40 of 60 min, but cloud cuts the sun to 60% of clear-sky strength, so it comes and goes: about 24 min of direct sun.',
     )
   })
 
-  it('calls the sun hazy when heavy cloud still lets some beam through', () => {
-    expect(combinedMessage(result(50, 10), [hour({ cloudCover: 95 })], 20)).toBe(
-      'Clear of building shadows for 50 of 60 min, but under 95% cloud cover the sun is hazy: about 20 min of direct sun.',
+  it('is upbeat when the sun is near full strength', () => {
+    expect(combinedMessage(result(60, 0), dry, 57)).toBe(
+      'Clear of building shadows for all 60 min, and with the sun at 95% of clear-sky strength nearly all of it is direct sun: about 57 min.',
     )
   })
 
-  it('is upbeat under a clear sky', () => {
-    expect(combinedMessage(result(60, 0), [hour()], 57)).toBe(
-      'Clear of building shadows for all 60 min, and with 5% cloud cover nearly all of it is direct sun: about 57 min.',
-    )
+  it('switches wording exactly at the weather label thresholds', () => {
+    const at = (strength: number) => combinedMessage(result(60, 0), dry, 60 * strength)
+    expect(at(0.7)).toContain('nearly all of it is direct sun')
+    expect(at(0.69)).toContain('comes and goes')
+    expect(at(0.3)).toContain('comes and goes')
+    expect(at(0.29)).toContain('mostly diffuse')
   })
 
-  it('explains thin cloud that lets the beam through', () => {
-    expect(combinedMessage(result(60, 0), [hour({ cloudCover: 100 })], 50)).toBe(
-      'Clear of building shadows for all 60 min, and although cloud cover is 100% it is thin, so most of it is direct sun: about 50 min.',
-    )
+  it('judges the sky by sun strength alone, so heavy cloud cover changes nothing', () => {
+    // Thin high cloud: 100% cover, but the beam still gets through.
+    const overcastSky = [hour({ cloudCover: 100 })]
+    expect(combinedMessage(result(60, 0), overcastSky, 57)).toBe(combinedMessage(result(60, 0), dry, 57))
+    expect(combinedMessage(result(60, 0), overcastSky, 24)).toBe(combinedMessage(result(60, 0), dry, 24))
   })
 
-  it('never mentions direct sun without the cloud context', () => {
+  it('never mentions direct sun without the sun strength beside it', () => {
     const messages = [
-      combinedMessage(result(40, 20), [cloudy], 12),
-      combinedMessage(result(40, 20), [hour({ cloudCover: 50 })], 24),
-      combinedMessage(result(60, 0), [hour()], 57),
+      combinedMessage(result(40, 20), dry, 11),
+      combinedMessage(result(40, 20), dry, 24),
+      combinedMessage(result(60, 0), dry, 57),
       combinedMessage(result(40, 20), null, null),
       combinedMessage(result(40, 20), [hour({ precipitationProbability: 80 })], 10),
     ]
     for (const message of messages) {
-      if (message.includes('direct sun')) expect(message).toMatch(/cloud cover/)
+      if (message.includes('direct sun')) expect(message).toMatch(/\d+% of clear-sky strength/)
     }
   })
 
-  it('mentions rain first', () => {
-    expect(combinedMessage(result(40, 20), [hour(), hour({ precipitationProbability: 80 })], 15)).toContain(
+  it('mentions rain first, from a 60% chance in any hour of the window', () => {
+    expect(combinedMessage(result(40, 20), [hour(), hour({ precipitationProbability: 60 })], 15)).toContain(
       'rain is likely',
+    )
+    expect(combinedMessage(result(40, 20), [hour(), hour({ precipitationProbability: 59 })], 15)).not.toContain(
+      'rain',
     )
   })
 
   it('reports full building shade without promising sun', () => {
-    expect(combinedMessage(result(0, 60), [hour()], 0)).toBe(
+    expect(combinedMessage(result(0, 60), dry, 0)).toBe(
       'Building shadows cover this spot for the whole window, so it gets no direct sun whatever the sky does.',
     )
   })
 
   it('handles a window entirely after sunset', () => {
-    expect(combinedMessage(result(0, 0, 60), [hour()], 0)).toContain('below the horizon for this whole window')
+    expect(combinedMessage(result(0, 0, 60), dry, 0)).toContain('below the horizon for this whole window')
   })
 
   it('mentions the horizon only when part of the window is after sunset', () => {
-    expect(combinedMessage(result(40, 20), [hour()], 38)).not.toMatch(/horizon/)
-    expect(combinedMessage(result(40, 0, 20), [hour()], 38)).toContain('below the horizon for 20 min')
+    expect(combinedMessage(result(40, 20), dry, 38)).not.toMatch(/horizon/)
+    expect(combinedMessage(result(40, 0, 20), dry, 38)).toContain('below the horizon for 20 min')
   })
 
   it('does not guess at sunshine when there is no forecast', () => {

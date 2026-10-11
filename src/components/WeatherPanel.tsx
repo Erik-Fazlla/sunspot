@@ -33,7 +33,8 @@ export function WeatherPanel({ state, currentMin, sunFactor }: Props) {
 
   const hour = hourAt(state.forecast, currentMin)
   if (!hour) return <p className="note">The forecast has no data for this hour.</p>
-  const label = weatherLabel(hour)
+  // Without a sunFactor there is no forecast, and this branch is not reached; 1 keeps the types honest.
+  const label = weatherLabel(sunFactor ?? 1, hour.precipitationProbability)
   const hourStart = Math.floor(currentMin / 60) * 60
 
   return (
@@ -44,7 +45,7 @@ export function WeatherPanel({ state, currentMin, sunFactor }: Props) {
       </div>
       <div className="stats">
         <div className="stat">
-          <strong>{value(hour.cloudCover === null ? null : Math.round(hour.cloudCover), '%')}</strong>
+          <strong>{value(hour.cloudCover, '%')}</strong>
           <span>Cloud cover</span>
         </div>
         <div className="stat">
