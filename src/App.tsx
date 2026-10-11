@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { MapView, type LngLat } from './components/MapView'
+import { ResultCard } from './components/ResultCard'
 import { SearchBox } from './components/SearchBox'
 import { SunArc } from './components/SunArc'
 import { TimeControls } from './components/TimeControls'
@@ -13,6 +14,7 @@ import {
   PLAY_INTERVAL_MS,
   STEP_MINUTES,
 } from './lib/constants'
+import { analyzePoint } from './lib/analysis'
 import type { Place } from './lib/geocode'
 import type { Building } from './lib/shadow'
 import { addDays, diffDays, formatDateLabel, todayInTz, zonedToUtc } from './lib/time'
@@ -31,7 +33,7 @@ export default function App() {
   const [sliderMin, setSliderMin] = useState(DEFAULT_START_MIN)
   const [playing, setPlaying] = useState(false)
   const [point, setPoint] = useState<LngLat | null>(null)
-  const [, setBuildings] = useState<Building[]>([])
+  const [buildings, setBuildings] = useState<Building[]>([])
   const [panelOpen, setPanelOpen] = useState(true)
 
   // Weather and timezone follow the clicked point when there is one.
@@ -94,6 +96,12 @@ export default function App() {
     return () => clearInterval(timer)
   }, [playing, startMin, windowEnd])
 
+  const analysis = useMemo(
+    () =>
+      point ? analyzePoint([point.lon, point.lat], buildings, date, startMin, windowEnd, timezone) : null,
+    [point, buildings, date, startMin, windowEnd, timezone],
+  )
+
   const whenMessage = useMemo(() => {
     if (!windowValid) return 'The end time must be after the start time.'
     if (!inForecastRange) {
@@ -108,7 +116,10 @@ export default function App() {
         center={place}
         sunTime={sunTime}
         point={point}
-        onPointSelect={setPoint}
+        onPointSelect={(selected) => {
+          setPoint(selected)
+          setPanelOpen(true)
+        }}
         onBuildingsChange={setBuildings}
       />
 
@@ -151,6 +162,26 @@ export default function App() {
 
         <div className="panel__collapse" id="panel-body">
           <div className="panel__body">
+            <section className="section">
+              <div className="section__head">
+                <h2 className="section__title">Spot check</h2>
+                {point && (
+                  <small>
+                    {point.lat.toFixed(4)}, {point.lon.toFixed(4)}
+                  </small>
+                )}
+              </div>
+              <ResultCard
+                analysis={analysis}
+                forecast={forecast}
+                startMin={startMin}
+                endMin={windowEnd}
+                currentMin={currentMin}
+                hasBuildings={buildings.length > 0}
+                onClear={() => setPoint(null)}
+              />
+            </section>
+
             <section className="section">
               <h2 className="section__title">Where</h2>
               <SearchBox
