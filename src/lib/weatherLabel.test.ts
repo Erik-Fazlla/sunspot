@@ -1,69 +1,67 @@
 import { describe, expect, it } from 'vitest'
-import { labelSlug, weatherLabel, type HourWeather } from './weatherLabel'
+import {
+  labelSlug,
+  PARTLY_SUNNY_SUN_FACTOR,
+  RAINY_PROBABILITY_PCT,
+  SUNNY_SUN_FACTOR,
+  weatherLabel,
+} from './weatherLabel'
 
-function hour(overrides: Partial<HourWeather>): HourWeather {
-  return {
-    time: '2026-10-12T14:00',
-    cloudCover: 0,
-    precipitationProbability: 0,
-    precipitation: 0,
-    temperature: 22,
-    directRadiation: 500,
-    shortwaveRadiation: 650,
-    ...overrides,
-  }
-}
+describe('weatherLabel thresholds', () => {
+  it('are the documented constants', () => {
+    expect(RAINY_PROBABILITY_PCT).toBe(60)
+    expect(SUNNY_SUN_FACTOR).toBe(0.7)
+    expect(PARTLY_SUNNY_SUN_FACTOR).toBe(0.3)
+  })
+})
 
 describe('weatherLabel', () => {
-  it('is Sunny with clear sky and a strong direct beam', () => {
-    expect(weatherLabel(hour({ cloudCover: 10 }))).toBe('Sunny')
-    expect(weatherLabel(hour({ cloudCover: 25 }))).toBe('Sunny')
+  it('is Sunny from a sunFactor of 0.7 up', () => {
+    expect(weatherLabel(1, 0)).toBe('Sunny')
+    expect(weatherLabel(0.85, 10)).toBe('Sunny')
+    expect(weatherLabel(SUNNY_SUN_FACTOR, 0)).toBe('Sunny')
   })
 
-  it('is Partly sunny with moderate cloud', () => {
-    expect(weatherLabel(hour({ cloudCover: 26 }))).toBe('Partly sunny')
-    expect(weatherLabel(hour({ cloudCover: 60, directRadiation: 250, shortwaveRadiation: 450 }))).toBe('Partly sunny')
+  it('is Partly sunny from 0.3 up to just under 0.7', () => {
+    expect(weatherLabel(0.69, 0)).toBe('Partly sunny')
+    expect(weatherLabel(0.5, 0)).toBe('Partly sunny')
+    expect(weatherLabel(PARTLY_SUNNY_SUN_FACTOR, 0)).toBe('Partly sunny')
   })
 
-  it('is Partly sunny when the sky is clear but the direct beam is weak (haze)', () => {
-    expect(weatherLabel(hour({ cloudCover: 10, directRadiation: 120, shortwaveRadiation: 400 }))).toBe('Partly sunny')
+  it('is Overcast below 0.3', () => {
+    expect(weatherLabel(0.29, 0)).toBe('Overcast')
+    expect(weatherLabel(0, 0)).toBe('Overcast')
   })
 
-  it('is Overcast with heavy cloud or almost no direct beam', () => {
-    expect(weatherLabel(hour({ cloudCover: 80 }))).toBe('Overcast')
-    expect(weatherLabel(hour({ cloudCover: 100, directRadiation: 5, shortwaveRadiation: 120 }))).toBe('Overcast')
-    expect(weatherLabel(hour({ cloudCover: 55, directRadiation: 10, shortwaveRadiation: 200 }))).toBe('Overcast')
+  it('is Rainy from a 60% rain chance up, whatever the sunFactor', () => {
+    expect(weatherLabel(1, RAINY_PROBABILITY_PCT)).toBe('Rainy')
+    expect(weatherLabel(0.5, 85)).toBe('Rainy')
+    expect(weatherLabel(0, 100)).toBe('Rainy')
   })
 
-  it('is Rainy when it rains or rain is likely, whatever the cloud cover', () => {
-    expect(weatherLabel(hour({ precipitation: 0.2 }))).toBe('Rainy')
-    expect(weatherLabel(hour({ precipitationProbability: 60 }))).toBe('Rainy')
-    expect(weatherLabel(hour({ cloudCover: 100, precipitation: 1.4 }))).toBe('Rainy')
+  it('ignores a rain chance under 60%', () => {
+    expect(weatherLabel(1, 59)).toBe('Sunny')
+    expect(weatherLabel(0.5, 59)).toBe('Partly sunny')
+    expect(weatherLabel(0.1, 59)).toBe('Overcast')
   })
 
-  it('does not call a trace of drizzle or a small chance rainy', () => {
-    expect(weatherLabel(hour({ precipitation: 0.1, precipitationProbability: 59 }))).toBe('Sunny')
+  it('treats an unknown rain chance as none', () => {
+    expect(weatherLabel(0.9, null)).toBe('Sunny')
+    expect(weatherLabel(0.1, null)).toBe('Overcast')
   })
 
-  it('judges night hours on cloud cover alone', () => {
-    const night = { directRadiation: 0, shortwaveRadiation: 0 }
-    expect(weatherLabel(hour({ ...night, cloudCover: 5 }))).toBe('Sunny')
-    expect(weatherLabel(hour({ ...night, cloudCover: 50 }))).toBe('Partly sunny')
-    expect(weatherLabel(hour({ ...night, cloudCover: 95 }))).toBe('Overcast')
+  it('depends on nothing but those two numbers', () => {
+    // Two arguments in, one label out: cloud cover, precipitation amount and
+    // radiation only matter through the sunFactor they produce.
+    expect(weatherLabel.length).toBe(2)
   })
 
-  it('treats missing values as zero', () => {
-    expect(
-      weatherLabel(
-        hour({
-          cloudCover: null,
-          precipitation: null,
-          precipitationProbability: null,
-          directRadiation: null,
-          shortwaveRadiation: null,
-        }),
-      ),
-    ).toBe('Sunny')
+  it('never returns anything but the four labels across the whole input range', () => {
+    const labels = new Set<string>()
+    for (let factor = 0; factor <= 1.0001; factor += 0.05) {
+      for (const chance of [null, 0, 30, 59, 60, 100]) labels.add(weatherLabel(factor, chance))
+    }
+    expect([...labels].sort()).toEqual(['Overcast', 'Partly sunny', 'Rainy', 'Sunny'])
   })
 })
 

@@ -115,11 +115,11 @@ export function ResultCard({
       {hours && hours.length > 0 && (
         <div className="result__hours">
           {hours.map((hour) => {
-            const label = weatherLabel(hour)
             // Each chip shows only the part of its hour that lies inside the window.
             const hourStart = Number(hour.time.slice(11, 13)) * 60
             const from = Math.max(hourStart, startMin)
             const to = Math.min(hourStart + 60, endMin)
+            const label = weatherLabel(factorAt ? factorAt(hourStart) : 1, hour.precipitationProbability)
             return (
               <span key={hour.time} className={`chip chip--${labelSlug(label)}`}>
                 {formatMinutes(from)}–{formatMinutes(to)} {label}
