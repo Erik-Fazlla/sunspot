@@ -875,7 +875,7 @@ p {
     bottom: calc(8px + env(safe-area-inset-bottom));
     width: auto;
     max-width: none;
-    max-height: 62dvh;
+    max-height: 56dvh;
   }
 
   .panel__head {
