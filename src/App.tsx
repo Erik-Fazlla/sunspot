@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { LayerToggles } from './components/LayerToggles'
 import { MapView, type LngLat } from './components/MapView'
 import { ResultCard } from './components/ResultCard'
 import { SearchBox } from './components/SearchBox'
@@ -7,6 +8,7 @@ import { TimeControls } from './components/TimeControls'
 import { TimeSlider } from './components/TimeSlider'
 import { WeatherPanel } from './components/WeatherPanel'
 import { useForecast, useTimezone } from './hooks/useForecast'
+import { useStoredBoolean } from './hooks/useStoredBoolean'
 import {
   DEFAULT_TIMEZONE,
   FALLBACK_PLACE,
@@ -36,6 +38,7 @@ export default function App() {
   const [point, setPoint] = useState<LngLat | null>(null)
   const [buildings, setBuildings] = useState<Building[]>([])
   const [panelOpen, setPanelOpen] = useState(true)
+  const [showSunlight, setShowSunlight] = useStoredBoolean('sunspot:sunlight-overlay', false)
 
   // Weather and timezone follow the clicked point when there is one.
   const target = point ?? place
@@ -130,6 +133,7 @@ export default function App() {
         center={place}
         sunTime={sunTime}
         sunFactor={currentFactor ?? 1}
+        showSunlight={showSunlight}
         point={point}
         onPointSelect={(selected) => {
           setPoint(selected)
@@ -248,6 +252,21 @@ export default function App() {
                 <small>{point ? 'at the marked spot' : 'at the map location'}</small>
               </div>
               <WeatherPanel state={forecast} currentMin={currentMin} sunFactor={currentFactor} />
+            </section>
+
+            <section className="section">
+              <h2 className="section__title">Map layers</h2>
+              <LayerToggles
+                toggles={[
+                  {
+                    id: 'sunlight',
+                    label: 'Sunlight overlay',
+                    hint: 'Warm tint on sunlit ground, paler under cloud',
+                    checked: showSunlight,
+                    onChange: setShowSunlight,
+                  },
+                ]}
+              />
             </section>
 
             <footer className="credits">
