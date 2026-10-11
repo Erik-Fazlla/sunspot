@@ -17,7 +17,7 @@ export interface Forecast {
   hours: HourWeather[]
 }
 
-interface ForecastResponse {
+export interface ForecastResponse {
   timezone: string
   hourly?: { time: string[] } & Record<(typeof HOURLY_VARIABLES)[number], (number | null)[] | undefined>
   error?: boolean
@@ -47,12 +47,36 @@ async function request(params: Record<string, string>): Promise<ForecastResponse
 }
 
 /**
- * Cloud cover is a snapshot on the hour. Averaging it with the next snapshot
- * gives a value for the hour in between, matching the radiation means.
+ * Turn an Open-Meteo hourly block into forecast hours, reading each variable
+ * from the row that describes the hour starting at the timestamp.
+ *
+ * Open-Meteo uses two conventions:
+ *
+ * - Snapshots (cloud_cover, temperature_2m) are instantaneous values at the
+ *   timestamp: read row i.
+ * - Preceding-hour values (direct_radiation, shortwave_radiation,
+ *   precipitation, precipitation_probability) are a mean, total or chance for
+ *   the hour that ENDS at the timestamp. The hour that starts at row i is
+ *   therefore described by row i + 1.
+ *
+ * The last row has no successor on a one-day request, so its preceding-hour
+ * fields are null (23:00 to midnight: dark almost everywhere).
  */
-function hourMean(atStart: number | null | undefined, atEnd: number | null | undefined): number | null {
-  if (atStart == null) return atEnd ?? null
-  return atEnd == null ? atStart : (atStart + atEnd) / 2
+export function parseHourly(data: ForecastResponse): Forecast {
+  const hourly = data.hourly
+  if (!hourly?.time?.length) throw new Error('Open-Meteo returned no hourly data for this date')
+  return {
+    timezone: data.timezone,
+    hours: hourly.time.map((time, i) => ({
+      time,
+      cloudCover: hourly.cloud_cover?.[i] ?? null,
+      temperature: hourly.temperature_2m?.[i] ?? null,
+      precipitationProbability: hourly.precipitation_probability?.[i + 1] ?? null,
+      precipitation: hourly.precipitation?.[i + 1] ?? null,
+      directRadiation: hourly.direct_radiation?.[i + 1] ?? null,
+      shortwaveRadiation: hourly.shortwave_radiation?.[i + 1] ?? null,
+    })),
+  }
 }
 
 /** Hourly forecast for one date at a place, cached per (lat, lon, date). */
@@ -68,26 +92,7 @@ export function fetchForecast(lat: number, lon: number, date: string): Promise<F
     timezone: 'auto',
     start_date: date,
     end_date: date,
-  }).then((data): Forecast => {
-    const hourly = data.hourly
-    if (!hourly?.time?.length) throw new Error('Open-Meteo returned no hourly data for this date')
-    return {
-      timezone: data.timezone,
-      hours: hourly.time.map((time, i) => ({
-        time,
-        cloudCover: hourMean(hourly.cloud_cover?.[i], hourly.cloud_cover?.[i + 1]),
-        // Open-Meteo reports these four as totals, means or chances for the hour that
-        // *ends* at the timestamp. Reading the next row turns them into values
-        // for the hour that *starts* at `time`, like everything else here.
-        // The 23:00 row has no successor on a one-day request, so it is null.
-        precipitationProbability: hourly.precipitation_probability?.[i + 1] ?? null,
-        precipitation: hourly.precipitation?.[i + 1] ?? null,
-        directRadiation: hourly.direct_radiation?.[i + 1] ?? null,
-        shortwaveRadiation: hourly.shortwave_radiation?.[i + 1] ?? null,
-        temperature: hourly.temperature_2m?.[i] ?? null,
-      })),
-    }
-  })
+  }).then(parseHourly)
   forecastCache.set(key, pending)
   // A failed request must not poison the cache: let the next call retry.
   pending.catch(() => forecastCache.delete(key))
