@@ -50,10 +50,32 @@ export function shadowVector(
   heightM: number,
   sun: Pick<SunPosition, 'altitudeRad' | 'bearingDeg'>,
 ): { east: number; north: number } | null {
-  const length = shadowLength(heightM, sun.altitudeRad)
-  if (length === 0) return null
-  const bearing = shadowBearing(sun.bearingDeg) / DEG
-  return { east: length * Math.sin(bearing), north: length * Math.cos(bearing) }
+  if (sun.altitudeRad <= 0 || heightM <= 0) return null
+  const { perMetre, east, north } = shadowTrig(sun)
+  const length = Math.min(heightM * perMetre, MAX_SHADOW_LENGTH_M)
+  return { east: length * east, north: length * north }
+}
+
+interface ShadowTrig {
+  /** Shadow length per metre of height: 1 / tan(altitude). */
+  perMetre: number
+  /** Unit vector of the shadow direction. */
+  east: number
+  north: number
+}
+
+// One sun position shades thousands of buildings, trees and benches per frame,
+// so its trigonometry is worked out once and remembered for that object.
+const trigCache = new WeakMap<object, ShadowTrig>()
+
+function shadowTrig(sun: Pick<SunPosition, 'altitudeRad' | 'bearingDeg'>): ShadowTrig {
+  let trig = trigCache.get(sun)
+  if (!trig) {
+    const bearing = shadowBearing(sun.bearingDeg) / DEG
+    trig = { perMetre: 1 / Math.tan(sun.altitudeRad), east: Math.sin(bearing), north: Math.cos(bearing) }
+    trigCache.set(sun, trig)
+  }
+  return trig
 }
 
 export interface SunTimes {

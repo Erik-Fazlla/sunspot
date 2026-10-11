@@ -1,4 +1,3 @@
-import { booleanPointInPolygon } from '@turf/boolean-point-in-polygon'
 import { featureCollection, polygon } from '@turf/helpers'
 import { union } from '@turf/union'
 import type { Feature, Geometry, MultiPolygon, Polygon, Position } from 'geojson'
@@ -15,6 +14,11 @@ export interface Building {
   /** Outer footprint ring. Courtyards (holes) are not modelled. */
   ring: Ring
   height: number
+  /**
+   * Height of the underside above the ground, in metres. 0 or absent for a
+   * building; the trunk height for a tree canopy, which floats above the ground.
+   */
+  base?: number
   convex: boolean
   bbox: BBox
 }
@@ -167,7 +171,10 @@ export function buildShadowPolygon(
  * one MultiPolygon (or the hull, for convex footprints). The map layer flattens
  * overlaps, so no union is needed.
  */
-export function shadowRenderGeometry(building: Building, offset: GroundOffset): Polygon | MultiPolygon {
+export function shadowRenderGeometry(
+  building: Pick<Building, 'ring' | 'convex'>,
+  offset: GroundOffset,
+): Polygon | MultiPolygon {
   if (building.convex) {
     const far = building.ring.map((position) => shift(position, offset))
     return { type: 'Polygon', coordinates: [convexHull([...building.ring, ...far])] }
@@ -189,8 +196,71 @@ function ringBBox(ring: Ring): BBox {
   return [west, south, east, north]
 }
 
-export function makeBuilding(ring: Ring, height: number, id?: string | number): Building {
-  return { id, ring, height, convex: isConvexRing(ring), bbox: ringBBox(ring) }
+export function makeBuilding(ring: Ring, height: number, id?: string | number, base = 0): Building {
+  return { id, ring, height, base, convex: isConvexRing(ring), bbox: ringBBox(ring) }
+}
+
+/**
+ * The footprint and displacement whose sweep is the shadow of a caster.
+ *
+ * A solid standing on the ground (base 0) sweeps its footprint from where it
+ * stands to the shadow of its top edge. A solid floating between `base` and
+ * `height`, such as a tree canopy, sweeps from the shadow of its underside to
+ * the shadow of its top: the same construction, started further out.
+ */
+export function shadowSweep(
+  caster: Pick<Building, 'ring' | 'height' | 'base' | 'convex'>,
+  sun: Sun,
+  lat: number,
+): { ring: Ring; offset: GroundOffset; convex: boolean } | null {
+  const top = shadowOffset(caster.height, sun, lat)
+  if (!top) return null
+  const bottom = caster.base && caster.base > 0 ? shadowOffset(caster.base, sun, lat) : null
+  if (!bottom) return { ring: caster.ring, offset: top, convex: caster.convex }
+  return {
+    ring: translateRing(caster.ring, bottom),
+    offset: { dLon: top.dLon - bottom.dLon, dLat: top.dLat - bottom.dLat },
+    convex: caster.convex,
+  }
+}
+
+/** Is `point` inside `ring`? Even-odd ray casting; the ring is closed. */
+export function pointInRing(point: Position, ring: Ring): boolean {
+  const [x, y] = point
+  let inside = false
+  for (let i = 0, j = ring.length - 2; i < ring.length - 1; j = i++) {
+    const [xi, yi] = ring[i]
+    const [xj, yj] = ring[j]
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside
+  }
+  return inside
+}
+
+function segmentsCross(a: Position, b: Position, c: Position, d: Position): boolean {
+  const side = (p: Position, q: Position, r: Position) =>
+    Math.sign((q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]))
+  return side(a, b, c) !== side(a, b, d) && side(c, d, a) !== side(c, d, b)
+}
+
+/**
+ * Does `caster` shade `point`? Exact and cheap: the point is shaded when the
+ * line from it toward the sun, as long as the shadow, touches the footprint.
+ * That is the same region as the shadow polygon, without building the polygon.
+ */
+export function isShadedBy(
+  point: Position,
+  caster: Pick<Building, 'ring' | 'height' | 'base' | 'convex'>,
+  sun: Sun,
+): boolean {
+  const sweep = shadowSweep(caster, sun, point[1])
+  if (!sweep) return false
+  const { ring, offset } = sweep
+  const towardSun: Position = [point[0] - offset.dLon, point[1] - offset.dLat]
+  if (pointInRing(point, ring) || pointInRing(towardSun, ring)) return true
+  for (let i = 0; i < ring.length - 1; i++) {
+    if (segmentsCross(point, towardSun, ring[i], ring[i + 1])) return true
+  }
+  return false
 }
 
 interface TileFeature {
@@ -234,9 +304,11 @@ function inBBox(point: Position, [west, south, east, north]: BBox): boolean {
 }
 
 /**
- * Is `point` ([lon, lat]) inside the shadow of any building?
+ * Is `point` ([lon, lat]) inside the shadow of any caster (building or tree)?
  * The building the point stands in (or on) is ignored: its own footprint
  * always "contains" the point and would shade every rooftop and doorway.
+ * A floating caster such as a tree canopy is never "own": a point under it
+ * is on the ground, and the canopy shades it only when the sun says so.
  * Returns false when the sun is down; callers treat night separately.
  */
 export function isPointInShade(point: Position, buildings: Building[], sun: Sun): boolean {
@@ -244,7 +316,8 @@ export function isPointInShade(point: Position, buildings: Building[], sun: Sun)
   const own = new Set<Building>()
   const ownIds = new Set<string | number>()
   for (const building of buildings) {
-    if (inBBox(point, building.bbox) && booleanPointInPolygon(point, polygon([building.ring]))) {
+    if (building.base && building.base > 0) continue
+    if (inBBox(point, building.bbox) && pointInRing(point, building.ring)) {
       own.add(building)
       // The same id marks the other pieces of a building split by a tile edge.
       if (building.id !== undefined) ownIds.add(building.id)
@@ -254,6 +327,7 @@ export function isPointInShade(point: Position, buildings: Building[], sun: Sun)
     if (own.has(building) || (building.id !== undefined && ownIds.has(building.id))) continue
     const offset = shadowOffset(building.height, sun, point[1])
     if (!offset) continue
+    // The whole shadow, grounded or floating, lies within the footprint's box stretched by the top offset.
     const [west, south, east, north] = building.bbox
     const reach: BBox = [
       west + Math.min(0, offset.dLon),
@@ -262,7 +336,7 @@ export function isPointInShade(point: Position, buildings: Building[], sun: Sun)
       north + Math.max(0, offset.dLat),
     ]
     if (!inBBox(point, reach)) continue
-    if (booleanPointInPolygon(point, buildShadowPolygon(building, offset))) return true
+    if (isShadedBy(point, building, sun)) return true
   }
   return false
 }

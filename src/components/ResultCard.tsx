@@ -17,7 +17,7 @@ interface Props {
   onClear: () => void
 }
 
-const STATE_LABEL = { sun: 'no building shadow', shade: 'building shade', night: 'sun below horizon' } as const
+const STATE_LABEL = { sun: 'no shadow', shade: 'shade from a building or tree', night: 'sun below horizon' } as const
 
 function sunText(sun: SunPosition): string {
   if (sun.altitudeDeg <= 0) return 'below horizon'
@@ -52,7 +52,7 @@ export function ResultCard({
       <div className="metrics">
         <div className="metric">
           <strong>{analysis.sunMinutes}</strong>
-          <span>of {analysis.totalMinutes} min clear of building shadows</span>
+          <span>of {analysis.totalMinutes} min clear of shadows</span>
         </div>
         <div className="metric metric--sun">
           {forecast.status === 'loading' ? (
@@ -89,7 +89,7 @@ export function ResultCard({
         </span>
         <span>
           <i style={{ background: 'var(--shade)' }} />
-          Building shade {analysis.shadeMinutes} min
+          Shade {analysis.shadeMinutes} min
         </span>
         {analysis.nightMinutes > 0 && (
           <span>
@@ -131,7 +131,7 @@ export function ResultCard({
 
       {!hasBuildings && (
         <p className="note note--warn">
-          No building outlines are loaded around this spot, so building shade is not counted. Zoom in closer.
+          No building outlines are loaded around this spot, so shade is not counted. Zoom in closer.
         </p>
       )}
 
