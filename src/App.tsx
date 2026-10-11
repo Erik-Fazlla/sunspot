@@ -1,10 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { MapView } from './components/MapView'
+import { MapView, type LngLat } from './components/MapView'
 import { SearchBox } from './components/SearchBox'
+import { SunArc } from './components/SunArc'
 import { TimeControls } from './components/TimeControls'
-import { DEFAULT_TIMEZONE, FALLBACK_PLACE, FORECAST_DAYS, STEP_MINUTES } from './lib/constants'
+import { TimeSlider } from './components/TimeSlider'
+import {
+  DEFAULT_TIMEZONE,
+  FALLBACK_PLACE,
+  FORECAST_DAYS,
+  PLAY_INTERVAL_MS,
+  STEP_MINUTES,
+} from './lib/constants'
 import type { Place } from './lib/geocode'
-import { addDays, diffDays, formatDateLabel, todayInTz } from './lib/time'
+import type { Building } from './lib/shadow'
+import { addDays, diffDays, formatDateLabel, todayInTz, zonedToUtc } from './lib/time'
 
 type GeoState = { status: 'idle' } | { status: 'locating' } | { status: 'error'; message: string }
 
@@ -17,6 +26,10 @@ export default function App() {
   const [date, setDate] = useState(() => addDays(todayInTz(DEFAULT_TIMEZONE), 1))
   const [startMin, setStartMin] = useState(DEFAULT_START_MIN)
   const [endMin, setEndMin] = useState(DEFAULT_END_MIN)
+  const [sliderMin, setSliderMin] = useState(DEFAULT_START_MIN)
+  const [playing, setPlaying] = useState(false)
+  const [point, setPoint] = useState<LngLat | null>(null)
+  const [, setBuildings] = useState<Building[]>([])
   const [panelOpen, setPanelOpen] = useState(true)
 
   const timezone = place.timezone ?? DEFAULT_TIMEZONE
@@ -58,6 +71,21 @@ export default function App() {
   // Keep a usable window even while the inputs are mid-edit.
   const windowEnd = windowValid ? endMin : Math.min(startMin + STEP_MINUTES, 24 * 60 - 1)
 
+  // The slider always sits on a 5-minute step inside the window.
+  const currentMin = Math.min(Math.max(sliderMin, startMin), windowEnd)
+  const sunTime = useMemo(() => zonedToUtc(date, currentMin, timezone), [date, currentMin, timezone])
+
+  useEffect(() => {
+    if (!playing) return
+    const timer = setInterval(() => {
+      setSliderMin((minutes) => {
+        const next = Math.max(minutes, startMin) + STEP_MINUTES
+        return next > windowEnd ? startMin : next
+      })
+    }, PLAY_INTERVAL_MS)
+    return () => clearInterval(timer)
+  }, [playing, startMin, windowEnd])
+
   const whenMessage = useMemo(() => {
     if (!windowValid) return 'The end time must be after the start time.'
     const offset = diffDays(today, date)
@@ -69,7 +97,13 @@ export default function App() {
 
   return (
     <div className="app">
-      <MapView center={place} />
+      <MapView
+        center={place}
+        sunTime={sunTime}
+        point={point}
+        onPointSelect={setPoint}
+        onBuildingsChange={setBuildings}
+      />
 
       <aside className={`panel${panelOpen ? '' : ' is-collapsed'}`} aria-label="Sunlight planner">
         <header className="panel__head">
@@ -93,6 +127,20 @@ export default function App() {
             </svg>
           </button>
         </header>
+
+        <div className="panel__pinned">
+          <TimeSlider
+            startMin={startMin}
+            endMin={windowEnd}
+            value={currentMin}
+            playing={playing}
+            onChange={(minutes) => {
+              setPlaying(false)
+              setSliderMin(minutes)
+            }}
+            onTogglePlay={() => setPlaying((value) => !value)}
+          />
+        </div>
 
         <div className="panel__collapse" id="panel-body">
           <div className="panel__body">
@@ -119,7 +167,24 @@ export default function App() {
                 onWindowChange={(start, end) => {
                   setStartMin(start)
                   setEndMin(end)
+                  setSliderMin(start)
                 }}
+              />
+            </section>
+
+            <section className="section">
+              <div className="section__head">
+                <h2 className="section__title">Sun</h2>
+                <small>{formatDateLabel(date)}</small>
+              </div>
+              <SunArc
+                date={date}
+                timezone={timezone}
+                lat={place.lat}
+                lon={place.lon}
+                startMin={startMin}
+                endMin={windowEnd}
+                currentMin={currentMin}
               />
             </section>
 
