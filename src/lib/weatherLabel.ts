@@ -4,17 +4,17 @@ export type WeatherLabel = 'Sunny' | 'Partly sunny' | 'Overcast' | 'Rainy'
 export interface HourWeather {
   /** Local wall-clock hour in the place's timezone, e.g. "2026-10-12T14:00". */
   time: string
-  /** Total cloud cover, % */
+  /** Total cloud cover, mean over the hour starting at `time`, % */
   cloudCover: number | null
-  /** Chance of precipitation, % */
+  /** Chance of precipitation in the hour starting at `time`, % */
   precipitationProbability: number | null
-  /** Precipitation in the preceding hour, mm */
+  /** Precipitation in the hour starting at `time`, mm */
   precipitation: number | null
   /** Air temperature at 2 m, degrees C */
   temperature: number | null
-  /** Direct solar radiation on a horizontal plane, preceding-hour mean, W/m2 */
+  /** Direct solar radiation on a horizontal plane, mean over the hour starting at `time`, W/m2 */
   directRadiation: number | null
-  /** Total (direct + diffuse) solar radiation, preceding-hour mean, W/m2 */
+  /** Total (direct + diffuse) solar radiation, mean over the hour starting at `time`, W/m2 */
   shortwaveRadiation: number | null
 }
 

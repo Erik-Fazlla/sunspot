@@ -46,6 +46,15 @@ async function request(params: Record<string, string>): Promise<ForecastResponse
   return data
 }
 
+/**
+ * Cloud cover is a snapshot on the hour. Averaging it with the next snapshot
+ * gives a value for the hour in between, matching the radiation means.
+ */
+function hourMean(atStart: number | null | undefined, atEnd: number | null | undefined): number | null {
+  if (atStart == null) return atEnd ?? null
+  return atEnd == null ? atStart : (atStart + atEnd) / 2
+}
+
 /** Hourly forecast for one date at a place, cached per (lat, lon, date). */
 export function fetchForecast(lat: number, lon: number, date: string): Promise<Forecast> {
   const key = forecastCacheKey(lat, lon, date)
@@ -66,12 +75,16 @@ export function fetchForecast(lat: number, lon: number, date: string): Promise<F
       timezone: data.timezone,
       hours: hourly.time.map((time, i) => ({
         time,
-        cloudCover: hourly.cloud_cover?.[i] ?? null,
-        precipitationProbability: hourly.precipitation_probability?.[i] ?? null,
-        precipitation: hourly.precipitation?.[i] ?? null,
+        cloudCover: hourMean(hourly.cloud_cover?.[i], hourly.cloud_cover?.[i + 1]),
+        // Open-Meteo reports these four as totals, means or chances for the hour that
+        // *ends* at the timestamp. Reading the next row turns them into values
+        // for the hour that *starts* at `time`, like everything else here.
+        // The 23:00 row has no successor on a one-day request, so it is null.
+        precipitationProbability: hourly.precipitation_probability?.[i + 1] ?? null,
+        precipitation: hourly.precipitation?.[i + 1] ?? null,
+        directRadiation: hourly.direct_radiation?.[i + 1] ?? null,
+        shortwaveRadiation: hourly.shortwave_radiation?.[i + 1] ?? null,
         temperature: hourly.temperature_2m?.[i] ?? null,
-        directRadiation: hourly.direct_radiation?.[i] ?? null,
-        shortwaveRadiation: hourly.shortwave_radiation?.[i] ?? null,
       })),
     }
   })

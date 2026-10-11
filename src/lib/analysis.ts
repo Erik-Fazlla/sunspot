@@ -12,12 +12,18 @@ export type SampleState = 'sun' | 'shade' | 'night'
 export interface Sample {
   /** Minutes after midnight, local time. */
   minutes: number
+  /** Minutes this sample stands for (the last one can be shorter than a step). */
+  duration: number
   state: SampleState
 }
 
 export interface PointAnalysis {
   samples: Sample[]
   totalMinutes: number
+  /**
+   * Geometric sun: minutes with the sun up and no building in the way.
+   * Says nothing about clouds; see `effectiveSunMinutes`.
+   */
   sunMinutes: number
   /** Blocked by a building while the sun is up. */
   shadeMinutes: number
@@ -59,8 +65,9 @@ export function analyzePoint(
     const sun = sunAt(minutes)
     const state: SampleState =
       sun.altitudeRad <= 0 ? 'night' : isPointInShade(point, nearby, sun) ? 'shade' : 'sun'
-    samples.push({ minutes, state })
-    minutesIn[state] += Math.min(stepMinutes, endMin - minutes)
+    const duration = Math.min(stepMinutes, endMin - minutes)
+    samples.push({ minutes, duration, state })
+    minutesIn[state] += duration
   }
 
   return {
@@ -81,33 +88,62 @@ export function hoursInWindow(forecast: Forecast, startMin: number, endMin: numb
   return forecast.hours.slice(first, last + 1)
 }
 
-/** One sentence combining the shadow result with the forecast for those hours. */
-export function combinedMessage(analysis: PointAnalysis, hours: HourWeather[] | null): string {
-  const { totalMinutes: total, sunMinutes: sun, nightMinutes: night } = analysis
+/**
+ * Effective sun: geometric sun weighted by how much direct beam the weather
+ * lets through. Each sample counts `duration * sunFactor` when it is in the
+ * sun and 0 otherwise, so 40 unshaded minutes at sunFactor 0.3 are 12 minutes.
+ * `factorAt` gives the sunFactor (0 to 1) for a time in minutes after midnight.
+ */
+export function effectiveSunMinutes(analysis: PointAnalysis, factorAt: (minutes: number) => number): number {
+  let total = 0
+  for (const sample of analysis.samples) {
+    if (sample.state === 'sun') total += sample.duration * factorAt(sample.minutes)
+  }
+  return total
+}
+
+/**
+ * One or two sentences combining the shadow result with the forecast. "Direct
+ * sun" is only ever mentioned together with the cloud situation, because clear
+ * of shadows is not the same as sunny. `effectiveMinutes` is null without a forecast.
+ */
+export function combinedMessage(
+  analysis: PointAnalysis,
+  hours: HourWeather[] | null,
+  effectiveMinutes: number | null,
+): string {
+  const { totalMinutes: total, sunMinutes: clear, nightMinutes: night } = analysis
   if (total > 0 && night === total) {
-    return 'The sun is below the horizon for this whole window, so there is no direct sun.'
+    return 'The sun is below the horizon for this whole window, so there is no sunlight to plan around.'
+  }
+  const nightNote = night > 0 ? ` The sun is below the horizon for ${night} min of the window.` : ''
+  if (clear === 0) {
+    return `Building shadows cover this spot for the whole window, so it gets no direct sun whatever the sky does.${nightNote}`
   }
   const lead =
-    sun === 0
-      ? `No direct sun in these ${total} min`
-      : sun === total
-        ? `In direct sun for all ${total} min`
-        : `In direct sun for ${sun} of ${total} min`
-  const nightNote = night > 0 ? ` The sun is below the horizon for ${night} min of the window.` : ''
-  if (!hours?.length) return `${lead}. The forecast is unavailable, so cloud cover is unknown.${nightNote}`
+    clear === total
+      ? `Clear of building shadows for all ${total} min`
+      : `Clear of building shadows for ${clear} of ${total} min`
+  if (!hours?.length || effectiveMinutes === null) {
+    return `${lead}. The forecast is unavailable, so how much of that is real sunshine is unknown.${nightNote}`
+  }
 
-  const labels = hours.map(weatherLabel)
+  const effective = Math.round(effectiveMinutes)
   const clouds = hours.map((h) => h.cloudCover ?? 0)
   const cloud = Math.round(clouds.reduce((a, b) => a + b, 0) / clouds.length)
+  const share = effectiveMinutes / clear
   let tail: string
-  if (labels.includes('Rainy')) {
-    tail = sun > 0 ? ', but rain is likely, so do not count on it' : ', and rain is likely'
-  } else if (cloud >= 80 || labels.every((l) => l === 'Overcast')) {
-    tail = sun > 0 ? `, but ${cloud}% cloud cover, so expect diffuse light` : `, under ${cloud}% cloud cover`
-  } else if (labels.every((l) => l === 'Sunny')) {
-    tail = sun > 0 ? ', and the sky should be clear' : ', even though the sky should be clear'
+  if (hours.map(weatherLabel).includes('Rainy')) {
+    tail = `, but rain is likely: count on about ${effective} min of actual sunshine at best`
+  } else if (share >= 0.8 && cloud >= 60) {
+    // Thin high cloud: the sky is covered but the beam still gets through.
+    tail = `, and although cloud cover is ${cloud}% it is thin, so most of it is direct sun: about ${effective} min`
+  } else if (share >= 0.8) {
+    tail = `, and with ${cloud}% cloud cover nearly all of it is direct sun: about ${effective} min`
+  } else if (share >= 0.4) {
+    tail = `, but with ${cloud}% cloud cover the sun comes and goes: about ${effective} min of direct sun`
   } else {
-    tail = sun > 0 ? `, with ${cloud}% cloud cover, so the sun may come and go` : `, with ${cloud}% cloud cover overhead`
+    tail = `, but with ${cloud}% cloud cover the light is mostly diffuse: only about ${effective} min of direct sun`
   }
   return `${lead}${tail}.${nightNote}`
 }

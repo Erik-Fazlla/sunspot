@@ -15,6 +15,7 @@ import {
   STEP_MINUTES,
 } from './lib/constants'
 import { analyzePoint } from './lib/analysis'
+import { hourSunFactor } from './lib/sunFactor'
 import type { Place } from './lib/geocode'
 import type { Building } from './lib/shadow'
 import { addDays, diffDays, formatDateLabel, todayInTz, zonedToUtc } from './lib/time'
@@ -96,6 +97,19 @@ export default function App() {
     return () => clearInterval(timer)
   }, [playing, startMin, windowEnd])
 
+  // sunFactor per forecast hour: how much direct beam the weather lets through.
+  const readyForecast = forecast.status === 'ready' ? forecast.forecast : null
+  const hourFactors = useMemo(
+    () => readyForecast?.hours.map((hour) => hourSunFactor(hour, target.lat, target.lon, timezone)) ?? null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [readyForecast, timezone],
+  )
+  const factorAt = useMemo(
+    () => (hourFactors ? (minutes: number) => hourFactors[Math.floor(minutes / 60)] ?? 1 : null),
+    [hourFactors],
+  )
+  const currentFactor = factorAt ? factorAt(currentMin) : null
+
   const analysis = useMemo(
     () =>
       point ? analyzePoint([point.lon, point.lat], buildings, date, startMin, windowEnd, timezone) : null,
@@ -115,6 +129,7 @@ export default function App() {
       <MapView
         center={place}
         sunTime={sunTime}
+        sunFactor={currentFactor ?? 1}
         point={point}
         onPointSelect={(selected) => {
           setPoint(selected)
@@ -174,6 +189,7 @@ export default function App() {
               <ResultCard
                 analysis={analysis}
                 forecast={forecast}
+                factorAt={factorAt}
                 startMin={startMin}
                 endMin={windowEnd}
                 currentMin={currentMin}
@@ -231,7 +247,7 @@ export default function App() {
                 <h2 className="section__title">Weather</h2>
                 <small>{point ? 'at the marked spot' : 'at the map location'}</small>
               </div>
-              <WeatherPanel state={forecast} currentMin={currentMin} />
+              <WeatherPanel state={forecast} currentMin={currentMin} sunFactor={currentFactor} />
             </section>
 
             <footer className="credits">
