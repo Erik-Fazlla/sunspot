@@ -15,6 +15,17 @@ export const FALLBACK_PLACE = {
 export const DEFAULT_TIMEZONE = 'Europe/Athens'
 export const DEFAULT_ZOOM = 16.4
 export const DEFAULT_PITCH = 52
+/** The MapLibre upper limit; lets the camera look along the streets toward the horizon. */
+export const MAX_PITCH = 85
+
+/**
+ * Free elevation tiles (Mapzen "terrarium" encoding) from the AWS Open Data
+ * registry. No key, CORS enabled.
+ */
+export const TERRAIN_TILES_URL = 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'
+export const TERRAIN_MAX_ZOOM = 15
+export const TERRAIN_ATTRIBUTION =
+  'Terrain: <a href="https://github.com/tilezen/joerd/blob/master/docs/attribution.md" target="_blank" rel="noreferrer">Mapzen, AWS Terrain Tiles</a>'
 
 /** Height used when a building has no height and no level count. */
 export const FALLBACK_BUILDING_HEIGHT_M = 12
@@ -26,7 +37,7 @@ export const MAX_SHADOW_LENGTH_M = 300
 /** Below this zoom there are too many buildings on screen to shade smoothly. */
 export const MIN_SHADOW_ZOOM = 15
 /** Upper bound on buildings shaded per frame (nearest to the map centre win). */
-export const MAX_SHADOW_BUILDINGS = 3000
+export const MAX_SHADOW_BUILDINGS = 2000
 export const MOVE_DEBOUNCE_MS = 250
 
 /** Slider step and sampling interval for the point analysis. */

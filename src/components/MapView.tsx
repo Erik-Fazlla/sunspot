@@ -6,6 +6,7 @@ import {
   NavigationControl,
   setWorkerUrl,
   type GeoJSONSource,
+  type SkySpecification,
 } from 'maplibre-gl'
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
 import 'maplibre-gl/dist/maplibre-gl.css'
@@ -17,10 +18,14 @@ import {
   DEFAULT_PITCH,
   DEFAULT_ZOOM,
   MAP_STYLE_URL,
+  MAX_PITCH,
   MAX_SHADOW_BUILDINGS,
   MAX_SHADOW_LENGTH_M,
   MIN_SHADOW_ZOOM,
   MOVE_DEBOUNCE_MS,
+  TERRAIN_ATTRIBUTION,
+  TERRAIN_MAX_ZOOM,
+  TERRAIN_TILES_URL,
 } from '../lib/constants'
 import {
   buildingsFromFeatures,
@@ -29,7 +34,7 @@ import {
   shadowRenderGeometry,
   type Building,
 } from '../lib/shadow'
-import { getSunPosition } from '../lib/sun'
+import { getSunPosition, type SunPosition } from '../lib/sun'
 
 // Vite pre-bundles maplibre-gl, so its "worker next to the module" lookup
 // would miss. Point it at a worker bundle Vite builds for us.
@@ -66,6 +71,37 @@ function shadowOpacity(sunFactor: number): number {
   return SHADOW_OPACITY * (MIN_SHADOW_SHARE + (1 - MIN_SHADOW_SHARE) * sunFactor)
 }
 
+// Elevation is loaded twice on purpose: MapLibre advises separate sources for
+// the 3D terrain mesh and the hillshade layer.
+const TERRAIN_SOURCE = 'sunspot-terrain'
+const HILLSHADE_SOURCE = 'sunspot-hillshade-dem'
+const HILLSHADE_LAYER = 'sunspot-hillshade'
+/** Hillshade goes under water and roads; this is the first such layer in the style. */
+const HILLSHADE_BEFORE = 'waterway_tunnel'
+const SHADOW_LIFT_ON_TERRAIN_M = 1.5
+
+/** Keeps roofs readable at sunrise and sunset, when a true sun angle would leave them dark. */
+const MAX_LIGHT_POLAR_DEG = 55
+
+type SkyPhase = 'day' | 'golden' | 'night'
+
+const SKY: Record<SkyPhase, SkySpecification> = {
+  day: { 'sky-color': '#74b0ea', 'horizon-color': '#dcecf9', 'fog-color': '#eef3f6' },
+  golden: { 'sky-color': '#6f8fc4', 'horizon-color': '#f9cf96', 'fog-color': '#f6e3c8' },
+  night: { 'sky-color': '#0b1230', 'horizon-color': '#2a3358', 'fog-color': '#1c2444' },
+}
+const SKY_BLEND: SkySpecification = {
+  'sky-horizon-blend': 0.6,
+  'horizon-fog-blend': 0.7,
+  'fog-ground-blend': 0.5,
+  'atmosphere-blend': ['interpolate', ['linear'], ['zoom'], 0, 1, 10, 1, 12, 0],
+}
+
+function skyPhase(sun: SunPosition): SkyPhase {
+  if (sun.altitudeDeg <= 0) return 'night'
+  return sun.altitudeDeg < 8 ? 'golden' : 'day'
+}
+
 export interface LngLat {
   lat: number
   lon: number
@@ -86,6 +122,8 @@ interface Props {
   sunFactor: number
   /** Tint sunlit ground with a warm overlay. */
   showSunlight: boolean
+  /** 3D terrain and hillshade from free elevation tiles. */
+  showTerrain: boolean
   point: LngLat | null
   onPointSelect: (point: LngLat) => void
   /** Called with every building in the loaded tiles whenever that set changes. */
@@ -97,6 +135,7 @@ export function MapView({
   sunTime,
   sunFactor,
   showSunlight,
+  showTerrain,
   point,
   onPointSelect,
   onBuildingsChange,
@@ -105,12 +144,14 @@ export function MapView({
   const mapRef = useRef<MapLibreMap | null>(null)
   const markerRef = useRef<Marker | null>(null)
   const buildingsRef = useRef<Building[]>([])
+  const visibleRef = useRef<Building[]>([])
   const signatureRef = useRef('')
   const drawRef = useRef<() => void>(() => {})
   const callbacksRef = useRef({ onPointSelect, onBuildingsChange })
   const [hint, setHint] = useState<Hint>(null)
   const [ready, setReady] = useState(false)
   const appearanceRef = useRef({ sunFactor })
+  const skyPhaseRef = useRef<SkyPhase | null>(null)
 
   useEffect(() => {
     callbacksRef.current = { onPointSelect, onBuildingsChange }
@@ -125,31 +166,33 @@ export function MapView({
       const mapCenter = map.getCenter()
       // The sun's direction is effectively the same across one viewport.
       const sun = getSunPosition(sunTime, mapCenter.lat, mapCenter.lng)
+      // Light the scene from where the sun actually is: walls facing it are
+      // bright, the sky follows the time of day and the hills are shaded to match.
+      const up = sun.altitudeRad > 0
+      const phase = skyPhase(sun)
+      map.setLight({
+        anchor: 'map',
+        position: [1.5, up ? sun.bearingDeg : 210, up ? Math.min(MAX_LIGHT_POLAR_DEG, 90 - sun.altitudeDeg) : 40],
+        intensity: up ? 0.55 : 0.15,
+        // Low sun is warm; high sun is white.
+        color: phase === 'golden' ? '#ffe0b0' : '#ffffff',
+      })
+      if (phase !== skyPhaseRef.current) {
+        skyPhaseRef.current = phase
+        map.setSky({ ...SKY_BLEND, ...SKY[phase] })
+      }
+      if (map.getLayer(HILLSHADE_LAYER)) {
+        map.setPaintProperty(HILLSHADE_LAYER, 'hillshade-illumination-direction', up ? Math.round(sun.bearingDeg) : 315)
+      }
+
       if (map.getZoom() < MIN_SHADOW_ZOOM || sun.altitudeRad <= 0) {
         source.setData(EMPTY)
         setHint(sun.altitudeRad <= 0 ? 'night' : 'zoom')
         return
       }
 
-      // Buildings just outside the view can still throw shadows into it.
-      const bounds = map.getBounds()
-      const margin = metersToDegrees(MAX_SHADOW_LENGTH_M, MAX_SHADOW_LENGTH_M, mapCenter.lat)
-      const west = bounds.getWest() - margin.dLon
-      const east = bounds.getEast() + margin.dLon
-      const south = bounds.getSouth() - margin.dLat
-      const north = bounds.getNorth() + margin.dLat
-      let visible = buildingsRef.current.filter(
-        ({ bbox }) => bbox[2] >= west && bbox[0] <= east && bbox[3] >= south && bbox[1] <= north,
-      )
-      // Busy views: shade the buildings nearest the centre and skip the rest.
-      if (visible.length > MAX_SHADOW_BUILDINGS) {
-        const distance = ({ bbox }: Building) =>
-          (bbox[0] - mapCenter.lng) ** 2 + (bbox[1] - mapCenter.lat) ** 2
-        visible = visible.sort((a, b) => distance(a) - distance(b)).slice(0, MAX_SHADOW_BUILDINGS)
-      }
-
       const features: Feature[] = []
-      for (const building of visible) {
+      for (const building of visibleRef.current) {
         const offset = shadowOffset(building.height, sun, mapCenter.lat)
         if (!offset) continue
         features.push({ type: 'Feature', properties: {}, geometry: shadowRenderGeometry(building, offset) })
@@ -169,9 +212,23 @@ export function MapView({
       zoom: DEFAULT_ZOOM,
       pitch: DEFAULT_PITCH,
       bearing: -18,
-      maxPitch: 70,
+      maxPitch: MAX_PITCH,
+      // Render at the real screen resolution so lines and labels stay sharp on HiDPI displays.
+      pixelRatio: window.devicePixelRatio,
       attributionControl: false,
     })
+    // The ratio changes when the window moves to another screen or the page is zoomed.
+    let ratioQuery: MediaQueryList | null = null
+    const onRatioChange = () => {
+      map.setPixelRatio(window.devicePixelRatio)
+      watchRatio()
+    }
+    const watchRatio = () => {
+      ratioQuery?.removeEventListener('change', onRatioChange)
+      ratioQuery = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`)
+      ratioQuery.addEventListener('change', onRatioChange)
+    }
+    watchRatio()
     map.addControl(new NavigationControl({ visualizePitch: true }), 'top-right')
     map.addControl(
       new AttributionControl({
@@ -194,6 +251,27 @@ export function MapView({
             )
           : []
       buildingsRef.current = buildings
+
+      // Which buildings to shade depends only on the view, not on the time, so
+      // it is worked out here (after a move) rather than on every slider step.
+      const mapCenter = map.getCenter()
+      // Buildings just outside the view can still throw shadows into it.
+      const bounds = map.getBounds()
+      const margin = metersToDegrees(MAX_SHADOW_LENGTH_M, MAX_SHADOW_LENGTH_M, mapCenter.lat)
+      const west = bounds.getWest() - margin.dLon
+      const east = bounds.getEast() + margin.dLon
+      const south = bounds.getSouth() - margin.dLat
+      const north = bounds.getNorth() + margin.dLat
+      let visible = buildings.filter(
+        ({ bbox }) => bbox[2] >= west && bbox[0] <= east && bbox[3] >= south && bbox[1] <= north,
+      )
+      // Busy views: shade the buildings nearest the centre and skip the rest.
+      if (visible.length > MAX_SHADOW_BUILDINGS) {
+        const distance = ({ bbox }: Building) =>
+          (bbox[0] - mapCenter.lng) ** 2 + (bbox[1] - mapCenter.lat) ** 2
+        visible = visible.sort((a, b) => distance(a) - distance(b)).slice(0, MAX_SHADOW_BUILDINGS)
+      }
+      visibleRef.current = visible
       // Tile loads fire often; only tell React when the set really changed.
       const first = buildings[0]?.bbox[0] ?? 0
       const last = buildings[buildings.length - 1]?.bbox[0] ?? 0
@@ -258,6 +336,7 @@ export function MapView({
 
     return () => {
       clearTimeout(timer)
+      ratioQuery?.removeEventListener('change', onRatioChange)
       map.remove()
       mapRef.current = null
     }
@@ -281,6 +360,49 @@ export function MapView({
     const visible = showSunlight && hint === null
     map.setPaintProperty(SUNLIGHT_LAYER, 'fill-opacity', visible ? SUNLIGHT_OPACITY * sunFactor : 0)
   }, [ready, showSunlight, sunFactor, hint])
+
+  // Terrain is optional: its tiles are only requested once it is switched on.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!ready || !map) return
+    if (showTerrain) {
+      if (!map.getSource(TERRAIN_SOURCE)) {
+        const dem = {
+          type: 'raster-dem' as const,
+          tiles: [TERRAIN_TILES_URL],
+          tileSize: 256,
+          maxzoom: TERRAIN_MAX_ZOOM,
+          encoding: 'terrarium' as const,
+          attribution: TERRAIN_ATTRIBUTION,
+        }
+        map.addSource(TERRAIN_SOURCE, dem)
+        map.addSource(HILLSHADE_SOURCE, dem)
+        map.addLayer(
+          {
+            id: HILLSHADE_LAYER,
+            type: 'hillshade',
+            source: HILLSHADE_SOURCE,
+            paint: {
+              'hillshade-exaggeration': 0.4,
+              'hillshade-shadow-color': '#39456b',
+              'hillshade-highlight-color': '#fff6dc',
+              'hillshade-illumination-anchor': 'map',
+            },
+          },
+          map.getLayer(HILLSHADE_BEFORE) ? HILLSHADE_BEFORE : undefined,
+        )
+      }
+      map.setLayoutProperty(HILLSHADE_LAYER, 'visibility', 'visible')
+      map.setTerrain({ source: TERRAIN_SOURCE, exaggeration: 1 })
+      // Lifted a little so the terrain surface does not hide the flat shadows.
+      map.setPaintProperty(SHADOW_LAYER, 'fill-extrusion-height', SHADOW_LIFT_ON_TERRAIN_M)
+      drawRef.current()
+    } else if (map.getSource(TERRAIN_SOURCE)) {
+      map.setTerrain(null)
+      map.setPaintProperty(SHADOW_LAYER, 'fill-extrusion-height', 0)
+      map.setLayoutProperty(HILLSHADE_LAYER, 'visibility', 'none')
+    }
+  }, [ready, showTerrain])
 
   useEffect(() => {
     mapRef.current?.flyTo({ center: [center.lon, center.lat], zoom: DEFAULT_ZOOM, duration: 1400 })
