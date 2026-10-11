@@ -225,7 +225,12 @@ export function MapView({
         map.setSky({ ...SKY_BLEND, ...SKY[phase] })
       }
       if (map.getLayer(HILLSHADE_LAYER)) {
-        map.setPaintProperty(HILLSHADE_LAYER, 'hillshade-illumination-direction', up ? Math.round(sun.bearingDeg) : 315)
+        // Hillshade is drawn into the terrain texture, which is costly to repaint,
+        // so its light only moves in 10-degree steps rather than on every slider step.
+        const direction = up ? Math.round(sun.bearingDeg / 10) * 10 : 315
+        if (map.getPaintProperty(HILLSHADE_LAYER, 'hillshade-illumination-direction') !== direction) {
+          map.setPaintProperty(HILLSHADE_LAYER, 'hillshade-illumination-direction', direction)
+        }
       }
 
       const street = streetRef.current
