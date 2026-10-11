@@ -38,6 +38,14 @@ setWorkerUrl(workerUrl)
 const SHADOW_SOURCE = 'sunspot-shadows'
 const SHADOW_LAYER = 'sunspot-shadows'
 const EMPTY: FeatureCollection = { type: 'FeatureCollection', features: [] }
+/** Shadow darkness under a clear sky. */
+const SHADOW_OPACITY = 0.42
+/** Under full cloud a faint shadow stays, so the geometry remains readable. */
+const MIN_SHADOW_SHARE = 0.25
+
+function shadowOpacity(sunFactor: number): number {
+  return SHADOW_OPACITY * (MIN_SHADOW_SHARE + (1 - MIN_SHADOW_SHARE) * sunFactor)
+}
 
 export interface LngLat {
   lat: number
@@ -55,13 +63,15 @@ interface Props {
   center: LngLat
   /** The instant whose shadows are drawn. */
   sunTime: Date
+  /** 0 to 1: how much direct sun the weather lets through. Fades the shadows under cloud. */
+  sunFactor: number
   point: LngLat | null
   onPointSelect: (point: LngLat) => void
   /** Called with every building in the loaded tiles whenever that set changes. */
   onBuildingsChange: (buildings: Building[]) => void
 }
 
-export function MapView({ center, sunTime, point, onPointSelect, onBuildingsChange }: Props) {
+export function MapView({ center, sunTime, sunFactor, point, onPointSelect, onBuildingsChange }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MapLibreMap | null>(null)
   const markerRef = useRef<Marker | null>(null)
@@ -70,6 +80,8 @@ export function MapView({ center, sunTime, point, onPointSelect, onBuildingsChan
   const drawRef = useRef<() => void>(() => {})
   const callbacksRef = useRef({ onPointSelect, onBuildingsChange })
   const [hint, setHint] = useState<Hint>(null)
+  const [ready, setReady] = useState(false)
+  const appearanceRef = useRef({ sunFactor })
 
   useEffect(() => {
     callbacksRef.current = { onPointSelect, onBuildingsChange }
@@ -180,7 +192,7 @@ export function MapView({ center, sunTime, point, onPointSelect, onBuildingsChan
           source: SHADOW_SOURCE,
           paint: {
             'fill-extrusion-color': '#141b38',
-            'fill-extrusion-opacity': 0.42,
+            'fill-extrusion-opacity': shadowOpacity(appearanceRef.current.sunFactor),
             'fill-extrusion-height': 0,
             'fill-extrusion-base': 0,
             'fill-extrusion-vertical-gradient': false,
@@ -193,6 +205,7 @@ export function MapView({ center, sunTime, point, onPointSelect, onBuildingsChan
         map.setPaintProperty(BUILDING_3D_LAYER, 'fill-extrusion-opacity', 0.94)
         map.setPaintProperty(BUILDING_3D_LAYER, 'fill-extrusion-color', '#efeae0')
       }
+      setReady(true)
       refresh()
     })
     map.on('moveend', scheduleRefresh)
@@ -211,6 +224,14 @@ export function MapView({ center, sunTime, point, onPointSelect, onBuildingsChan
     // The map is created once; later centre changes fly instead.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Clouds weaken the direct beam, so shadows fade with the sunFactor.
+  useEffect(() => {
+    appearanceRef.current = { sunFactor }
+    const map = mapRef.current
+    if (!ready || !map?.getLayer(SHADOW_LAYER)) return
+    map.setPaintProperty(SHADOW_LAYER, 'fill-extrusion-opacity', shadowOpacity(sunFactor))
+  }, [ready, sunFactor])
 
   useEffect(() => {
     mapRef.current?.flyTo({ center: [center.lon, center.lat], zoom: DEFAULT_ZOOM, duration: 1400 })

@@ -1,6 +1,12 @@
 import type { Position } from 'geojson'
 import { describe, expect, it } from 'vitest'
-import { analyzePoint, combinedMessage, hoursInWindow, type PointAnalysis } from './analysis'
+import {
+  analyzePoint,
+  combinedMessage,
+  effectiveSunMinutes,
+  hoursInWindow,
+  type PointAnalysis,
+} from './analysis'
 import type { Forecast } from './openMeteo'
 import { makeBuilding, metersToDegrees, type Ring } from './shadow'
 import type { HourWeather } from './weatherLabel'
@@ -103,34 +109,106 @@ describe('hoursInWindow', () => {
   })
 })
 
+describe('effectiveSunMinutes', () => {
+  // 13:00-14:00 on open ground: twelve unshaded 5-minute samples.
+  const open = analyzePoint(at(0, 0), [], '2026-06-21', 13 * 60, 14 * 60, TZ)
+
+  it('equals geometric sun under a clear sky and zero under full cloud', () => {
+    expect(effectiveSunMinutes(open, () => 1)).toBe(60)
+    expect(effectiveSunMinutes(open, () => 0)).toBe(0)
+  })
+
+  it('weights each unshaded sample by its sunFactor', () => {
+    expect(effectiveSunMinutes(open, () => 0.3)).toBeCloseTo(18)
+  })
+
+  it('uses the sunFactor of the hour each sample falls in', () => {
+    // 12:30-13:30: six samples in the 12:00 hour, six in the 13:00 hour.
+    const analysis = analyzePoint(at(0, 0), [], '2026-06-21', 12 * 60 + 30, 13 * 60 + 30, TZ)
+    const factorAt = (minutes: number) => (minutes < 13 * 60 ? 1 : 0.5)
+    expect(effectiveSunMinutes(analysis, factorAt)).toBeCloseTo(30 * 1 + 30 * 0.5)
+  })
+
+  it('counts nothing for shaded or night samples, however clear the sky', () => {
+    const tower = makeBuilding(rect(-20, -50, 20, -10), 100)
+    const shaded = analyzePoint(at(0, 0), [tower], '2026-06-21', 13 * 60, 14 * 60, TZ)
+    expect(effectiveSunMinutes(shaded, () => 1)).toBe(0)
+    const night = analyzePoint(at(0, 0), [], '2026-06-21', 23 * 60, 23 * 60 + 30, TZ)
+    expect(effectiveSunMinutes(night, () => 1)).toBe(0)
+  })
+
+  it('counts a short final sample by its real length', () => {
+    // 13:00-13:12 -> samples of 5, 5 and 2 minutes.
+    const analysis = analyzePoint(at(0, 0), [], '2026-06-21', 13 * 60, 13 * 60 + 12, TZ)
+    expect(analysis.samples.map((s) => s.duration)).toEqual([5, 5, 2])
+    expect(effectiveSunMinutes(analysis, () => 0.5)).toBeCloseTo(6)
+  })
+})
+
 describe('combinedMessage', () => {
-  it('warns about diffuse light under heavy cloud', () => {
-    expect(combinedMessage(result(40, 20), [hour({ cloudCover: 80, directRadiation: 60, shortwaveRadiation: 300 })])).toBe(
-      'In direct sun for 40 of 60 min, but 80% cloud cover, so expect diffuse light.',
+  const cloudy = hour({ cloudCover: 80, directRadiation: 60, shortwaveRadiation: 300 })
+
+  it('reports both geometric and effective sun under heavy cloud', () => {
+    expect(combinedMessage(result(40, 20), [cloudy], 12)).toBe(
+      'Clear of building shadows for 40 of 60 min, but with 80% cloud cover the light is mostly diffuse: only about 12 min of direct sun.',
+    )
+  })
+
+  it('says the sun comes and goes under broken cloud', () => {
+    expect(combinedMessage(result(40, 20), [hour({ cloudCover: 50 })], 24)).toBe(
+      'Clear of building shadows for 40 of 60 min, but with 50% cloud cover the sun comes and goes: about 24 min of direct sun.',
     )
   })
 
   it('is upbeat under a clear sky', () => {
-    expect(combinedMessage(result(60, 0), [hour()])).toBe('In direct sun for all 60 min, and the sky should be clear.')
+    expect(combinedMessage(result(60, 0), [hour()], 57)).toBe(
+      'Clear of building shadows for all 60 min, and with 5% cloud cover nearly all of it is direct sun: about 57 min.',
+    )
+  })
+
+  it('explains thin cloud that lets the beam through', () => {
+    expect(combinedMessage(result(60, 0), [hour({ cloudCover: 100 })], 50)).toBe(
+      'Clear of building shadows for all 60 min, and although cloud cover is 100% it is thin, so most of it is direct sun: about 50 min.',
+    )
+  })
+
+  it('never mentions direct sun without the cloud context', () => {
+    const messages = [
+      combinedMessage(result(40, 20), [cloudy], 12),
+      combinedMessage(result(40, 20), [hour({ cloudCover: 50 })], 24),
+      combinedMessage(result(60, 0), [hour()], 57),
+      combinedMessage(result(40, 20), null, null),
+      combinedMessage(result(40, 20), [hour({ precipitationProbability: 80 })], 10),
+    ]
+    for (const message of messages) {
+      if (message.includes('direct sun')) expect(message).toMatch(/cloud cover/)
+    }
   })
 
   it('mentions rain first', () => {
-    expect(combinedMessage(result(40, 20), [hour(), hour({ precipitationProbability: 80 })])).toContain(
+    expect(combinedMessage(result(40, 20), [hour(), hour({ precipitationProbability: 80 })], 15)).toContain(
       'rain is likely',
     )
   })
 
-  it('reports full shade', () => {
-    expect(combinedMessage(result(0, 60), [hour()])).toBe(
-      'No direct sun in these 60 min, even though the sky should be clear.',
+  it('reports full building shade without promising sun', () => {
+    expect(combinedMessage(result(0, 60), [hour()], 0)).toBe(
+      'Building shadows cover this spot for the whole window, so it gets no direct sun whatever the sky does.',
     )
   })
 
   it('handles a window entirely after sunset', () => {
-    expect(combinedMessage(result(0, 0, 60), [hour()])).toContain('below the horizon for this whole window')
+    expect(combinedMessage(result(0, 0, 60), [hour()], 0)).toContain('below the horizon for this whole window')
   })
 
-  it('says so when there is no forecast', () => {
-    expect(combinedMessage(result(40, 20), null)).toContain('forecast is unavailable')
+  it('mentions the horizon only when part of the window is after sunset', () => {
+    expect(combinedMessage(result(40, 20), [hour()], 38)).not.toMatch(/horizon/)
+    expect(combinedMessage(result(40, 0, 20), [hour()], 38)).toContain('below the horizon for 20 min')
+  })
+
+  it('does not guess at sunshine when there is no forecast', () => {
+    const message = combinedMessage(result(40, 20), null, null)
+    expect(message).toContain('forecast is unavailable')
+    expect(message).not.toContain('direct sun')
   })
 })
