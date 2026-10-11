@@ -37,6 +37,25 @@ setWorkerUrl(workerUrl)
 
 const SHADOW_SOURCE = 'sunspot-shadows'
 const SHADOW_LAYER = 'sunspot-shadows'
+const SUNLIGHT_SOURCE = 'sunspot-sunlight'
+const SUNLIGHT_LAYER = 'sunspot-sunlight'
+/** Overlay strength under a clear sky. */
+const SUNLIGHT_OPACITY = 0.3
+// One polygon over the whole map. The shadow layer above it darkens the shaded
+// parts, so the warm tint only reads as sunlit ground and no union is needed.
+const WORLD: FeatureCollection = {
+  type: 'FeatureCollection',
+  features: [
+    {
+      type: 'Feature',
+      properties: {},
+      geometry: {
+        type: 'Polygon',
+        coordinates: [[[-180, -85], [180, -85], [180, 85], [-180, 85], [-180, -85]]],
+      },
+    },
+  ],
+}
 const EMPTY: FeatureCollection = { type: 'FeatureCollection', features: [] }
 /** Shadow darkness under a clear sky. */
 const SHADOW_OPACITY = 0.42
@@ -65,13 +84,23 @@ interface Props {
   sunTime: Date
   /** 0 to 1: how much direct sun the weather lets through. Fades the shadows under cloud. */
   sunFactor: number
+  /** Tint sunlit ground with a warm overlay. */
+  showSunlight: boolean
   point: LngLat | null
   onPointSelect: (point: LngLat) => void
   /** Called with every building in the loaded tiles whenever that set changes. */
   onBuildingsChange: (buildings: Building[]) => void
 }
 
-export function MapView({ center, sunTime, sunFactor, point, onPointSelect, onBuildingsChange }: Props) {
+export function MapView({
+  center,
+  sunTime,
+  sunFactor,
+  showSunlight,
+  point,
+  onPointSelect,
+  onBuildingsChange,
+}: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MapLibreMap | null>(null)
   const markerRef = useRef<Marker | null>(null)
@@ -200,6 +229,17 @@ export function MapView({ center, sunTime, sunFactor, point, onPointSelect, onBu
         },
         map.getLayer(BUILDING_3D_LAYER) ? BUILDING_3D_LAYER : undefined,
       )
+      map.addSource(SUNLIGHT_SOURCE, { type: 'geojson', data: WORLD })
+      map.addLayer(
+        {
+          id: SUNLIGHT_LAYER,
+          type: 'fill',
+          source: SUNLIGHT_SOURCE,
+          paint: { 'fill-color': '#ffdf6b', 'fill-opacity': 0 },
+        },
+        // Below the shadows, so shaded ground is covered by them.
+        SHADOW_LAYER,
+      )
       if (map.getLayer(BUILDING_3D_LAYER)) {
         // Near-opaque walls keep the shadow under a footprint from tinting the building itself.
         map.setPaintProperty(BUILDING_3D_LAYER, 'fill-extrusion-opacity', 0.94)
@@ -232,6 +272,15 @@ export function MapView({ center, sunTime, sunFactor, point, onPointSelect, onBu
     if (!ready || !map?.getLayer(SHADOW_LAYER)) return
     map.setPaintProperty(SHADOW_LAYER, 'fill-extrusion-opacity', shadowOpacity(sunFactor))
   }, [ready, sunFactor])
+
+  // The sunlight tint follows the same rule, and only shows where shadows are
+  // drawn too: without them the whole map would wrongly look sunlit.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!ready || !map?.getLayer(SUNLIGHT_LAYER)) return
+    const visible = showSunlight && hint === null
+    map.setPaintProperty(SUNLIGHT_LAYER, 'fill-opacity', visible ? SUNLIGHT_OPACITY * sunFactor : 0)
+  }, [ready, showSunlight, sunFactor, hint])
 
   useEffect(() => {
     mapRef.current?.flyTo({ center: [center.lon, center.lat], zoom: DEFAULT_ZOOM, duration: 1400 })

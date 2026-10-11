@@ -864,6 +864,73 @@ p {
   font-weight: 500;
 }
 
+/* ---------- layer toggles ---------- */
+
+.toggles {
+  display: grid;
+  gap: 10px;
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+}
+
+.toggle input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.toggle__track {
+  flex: none;
+  position: relative;
+  width: 40px;
+  height: 24px;
+  border-radius: 12px;
+  background: rgba(27, 34, 51, 0.22);
+  transition: background 0.2s ease;
+}
+
+.toggle__track::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(20, 26, 45, 0.35);
+  transition: transform 0.25s var(--ease);
+}
+
+.toggle input:checked + .toggle__track {
+  background: var(--sun);
+}
+
+.toggle input:checked + .toggle__track::after {
+  transform: translateX(16px);
+}
+
+.toggle input:focus-visible + .toggle__track {
+  outline: 2px solid var(--sun-deep);
+  outline-offset: 2px;
+}
+
+.toggle__text strong {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.toggle__text small {
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
 /* ---------- map marker ---------- */
 
 .pin {
