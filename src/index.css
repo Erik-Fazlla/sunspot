@@ -1,0 +1,32 @@
+:root {
+  --paper: #f6f3ec;
+  --ink: #1b2233;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
+  background: #dfe5ea;
+}
+
+.app {
+  position: relative;
+  height: 100dvh;
+  width: 100%;
+}
+
+/* .app prefix outranks maplibre's own `.maplibregl-map { position: relative }`. */
+.app .map {
+  position: absolute;
+  inset: 0;
+}
