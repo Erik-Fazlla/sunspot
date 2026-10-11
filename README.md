@@ -14,14 +14,22 @@ service, so it costs nothing to host.
 - Date and time-window inputs (default: tomorrow, 14:00 to 15:00). A slider
   steps through the window in 5-minute steps and can play as an animation.
 - Building shadows drawn on the ground for the slider's time, recomputed for the
-  buildings in view whenever the map stops moving.
+  buildings in view whenever the map stops moving. Shadows fade under cloud.
 - Weather for the slider's hour: cloud cover, rain chance, direct radiation,
-  temperature and a label (Sunny, Partly sunny, Overcast or Rainy).
-- Click any spot for a result card: minutes of direct sun and shade in the
-  window, the sun's altitude and bearing at the start and end, the weather label
-  for those hours, and one combined sentence such as "In direct sun for 40 of
-  60 min, but 80% cloud cover, so expect diffuse light."
+  temperature, a label (Sunny, Partly sunny, Overcast or Rainy) and the sun's
+  strength compared with a clear sky.
+- Click any spot for a result card with two numbers: **geometric sun** (minutes
+  clear of building shadows) and **effective sun** (those minutes weighted by
+  how much direct beam the weather lets through). It also shows the sun's
+  altitude and bearing at the start and end, the weather label for each hour of
+  the window, and a verdict such as "Clear of building shadows for 40 of 60 min,
+  but with 80% cloud cover the light is mostly diffuse: only about 12 min of
+  direct sun."
 - Sunrise, sunset and the sun's height through the day.
+- Optional map layers, remembered between visits: a warm **sunlight overlay** on
+  sunlit ground, and **3D terrain** with hillshade.
+- A sky that follows the time of day, and building light that comes from where
+  the sun actually is.
 
 ## How it works
 
@@ -30,6 +38,7 @@ service, so it costs nothing to host.
 | Map rendering | [MapLibre GL JS](https://maplibre.org/) |
 | Tiles and style | [OpenFreeMap](https://openfreemap.org/) "liberty" style, OpenMapTiles schema, data from OpenStreetMap |
 | Sun position | [suncalc](https://github.com/mourner/suncalc) |
+| Terrain (optional) | [AWS Terrain Tiles](https://registry.opendata.aws/terrain-tiles/), Mapzen terrarium elevation tiles |
 | Forecast | [Open-Meteo forecast API](https://open-meteo.com/en/docs) |
 | Place search | [Open-Meteo geocoding API](https://open-meteo.com/en/docs/geocoding-api) |
 | Geometry | [turf](https://turfjs.org/) (union, point-in-polygon) |
@@ -67,10 +76,13 @@ on flat ground.
    metres north, converted to degrees with a local flat-earth approximation.
 
 4. **Shadow polygon.** The shadow of a prism is its footprint swept along that
-   displacement: the union of the footprint, its translated copy, and one quad
-   per wall. For convex footprints this equals the convex hull of the footprint
-   and its copy, which is used as a fast path; concave footprints use the turf
-   union.
+   displacement. That equals the footprint plus one quad per *leading* wall (a
+   wall facing the way the shadow falls), swept along the displacement. Trailing
+   walls and the translated roof outline add nothing, because any shaded point
+   outside the footprint is reached through a leading wall. For convex
+   footprints the convex hull of the footprint and its translated copy gives the
+   same shape and is used as a fast path; concave footprints use the turf union
+   of the pieces.
 
 5. **Building height.** `render_height` or `height` from the tiles, else
    `levels * 3 m`, else a 12 m fallback (`FALLBACK_BUILDING_HEIGHT_M`).
@@ -90,8 +102,69 @@ layer once, so overlapping shadows do not stack into darker patches. The result
 looks like a flat fill. Exact per-building polygons (with the union) are still
 used for the click analysis, where only nearby buildings matter.
 
-Shadows are drawn from zoom 15 up, for at most 3,000 buildings nearest the map
-centre.
+Shadows are drawn from zoom 15 up, for at most 2,000 buildings nearest the map
+centre. Which buildings those are is worked out once per map move, not per
+slider step. On a desktop GPU a slider step takes about 35 to 50 ms in a dense
+city view, with every layer switched on.
+
+### Cloud-aware sunlight (sunFactor)
+
+Being clear of building shadows is not the same as being in the sun, so each
+forecast hour gets a **sunFactor** between 0 and 1 (`src/lib/sunFactor.ts`):
+
+```
+sunFactor = forecast direct_radiation / clear-sky direct radiation
+```
+
+clamped to 0..1. The clear-sky value is an estimate for the sun's height at the
+middle of that hour (Meinel model):
+
+```
+airMass      = 1 / sin(altitude)
+directNormal = 1361 W/m2 * 0.7 ^ (airMass ^ 0.678)
+clearSky     = directNormal * sin(altitude)      (on a horizontal surface)
+```
+
+If the forecast has no direct radiation, or the clear-sky value is under
+30 W/m2 (sun below about 3 degrees, where the ratio is noise), the fallback is
+
+```
+sunFactor = 1 - cloud_cover / 100
+```
+
+sunFactor is used in three places:
+
+- **Effective sun minutes.** Each 5-minute sample counts `5 * sunFactor` if it
+  is clear of shadows and 0 otherwise. Forty unshaded minutes at sunFactor 0.3
+  are 12 effective minutes.
+- **Shadow darkness.** Shadow opacity scales with sunFactor (never below a
+  quarter of full strength, so the geometry stays readable under cloud).
+- **Sunlight overlay.** Its opacity scales with sunFactor too.
+
+Open-Meteo reports radiation, precipitation and rain chance for the hour that
+*ends* at each timestamp, and cloud cover as a snapshot. The app reads the
+backward-looking values from the next row and averages cloud cover across the
+hour, so every number shown for "14:00" describes 14:00 to 15:00.
+
+### Map layers and look
+
+- **Sunlight overlay** (off by default). One warm, translucent polygon over the
+  whole map, placed just below the shadow layer. Shadows cover it, so only
+  sunlit ground looks tinted. No polygon union is involved.
+- **3D terrain** (off by default). Elevation tiles drive both the terrain mesh
+  and a hillshade layer lit from the sun's bearing. The tiles are requested only
+  once the layer is switched on. Shadows are still computed for flat ground and
+  are lifted 1.5 m so the terrain does not hide them.
+- **Sky and light.** The sky colours switch between day, golden hour and night,
+  and buildings are lit from the sun's real bearing and height.
+- The map renders at the screen's `devicePixelRatio`, and the camera can pitch
+  up to 85 degrees.
+
+Both toggles are stored in `localStorage` (`sunspot:sunlight-overlay`,
+`sunspot:terrain`).
+
+The base style stays OpenFreeMap "liberty": it is already the most detailed of
+the OpenFreeMap styles (landuse, points of interest, transit, 3D buildings).
 
 ### Weather label thresholds
 
@@ -143,8 +216,9 @@ Then open the URL Vite prints (http://localhost:5173 by default).
 | `npm run lint` | Lint with oxlint |
 
 The tests cover the azimuth conversion, shadow length and direction, shadow
-polygons, the point-in-shade test, the weather label rules, timezone handling
-and the click analysis.
+polygons, the point-in-shade test, the weather label rules, sunFactor and the
+clear-sky estimate, effective sun minutes, the verdict wording, timezone
+handling and the click analysis.
 
 ## Deployment to GitHub Pages
 
@@ -174,6 +248,11 @@ a paid GitHub plan.
   courtyards are treated as filled.
 - **Roofs and upper floors.** Shade is computed at ground level. A marker placed
   on a building ignores that building.
+- **sunFactor is an estimate.** The clear-sky model assumes clean air, and the
+  forecast radiation is an hourly mean, so effective sun minutes are a guide,
+  not a measurement.
+- **Terrain is visual.** Hills do not cast shadows, and with 3D terrain on,
+  building shadows on steep slopes can be partly clipped by the ground.
 - **Tile edges.** A building cut by a tile boundary arrives in pieces. This does
   not change the drawn shadows but can slightly affect the click analysis at the
   seam.
@@ -181,10 +260,13 @@ a paid GitHub plan.
   several days ahead is a rough guide. Shadows work for any date; weather does
   not.
 - **Zoom.** Shadows and the click analysis need building outlines, which load
-  from zoom 15. Very busy views shade only the nearest 3,000 buildings.
+  from zoom 15. Very busy views shade only the nearest 2,000 buildings.
 
 ## Attribution
 
 Map data © [OpenStreetMap](https://www.openstreetmap.org/copyright)
 contributors. Tiles and style by [OpenFreeMap](https://openfreemap.org/)
 (© OpenMapTiles). Weather and geocoding by [Open-Meteo](https://open-meteo.com/).
+Terrain from [AWS Terrain Tiles](https://registry.opendata.aws/terrain-tiles/)
+(Mapzen), built from the sources listed in the
+[Tilezen Joerd attribution](https://github.com/tilezen/joerd/blob/master/docs/attribution.md).

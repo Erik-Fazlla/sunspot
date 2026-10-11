@@ -236,6 +236,10 @@ p {
   color: var(--ink-soft);
 }
 
+.section__action {
+  font-size: 12px;
+}
+
 .credits {
   padding: 12px 0 14px;
   font-size: 11.5px;

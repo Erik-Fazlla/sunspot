@@ -40,6 +40,11 @@ export const MIN_SHADOW_ZOOM = 15
 export const MAX_SHADOW_BUILDINGS = 2000
 export const MOVE_DEBOUNCE_MS = 250
 
+/** What the planner opens on: tomorrow (in the timezone of the place), 14:00 to 15:00. */
+export const DEFAULT_DATE_OFFSET_DAYS = 1
+export const DEFAULT_START_MIN = 14 * 60
+export const DEFAULT_END_MIN = 15 * 60
+
 /** Slider step and sampling interval for the point analysis. */
 export const STEP_MINUTES = 5
 export const PLAY_INTERVAL_MS = 450

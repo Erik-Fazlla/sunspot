@@ -10,6 +10,9 @@ import { WeatherPanel } from './components/WeatherPanel'
 import { useForecast, useTimezone } from './hooks/useForecast'
 import { useStoredBoolean } from './hooks/useStoredBoolean'
 import {
+  DEFAULT_DATE_OFFSET_DAYS,
+  DEFAULT_END_MIN,
+  DEFAULT_START_MIN,
   DEFAULT_TIMEZONE,
   FALLBACK_PLACE,
   FORECAST_DAYS,
@@ -24,13 +27,11 @@ import { addDays, diffDays, formatDateLabel, todayInTz, zonedToUtc } from './lib
 
 type GeoState = { status: 'idle' } | { status: 'locating' } | { status: 'error'; message: string }
 
-const DEFAULT_START_MIN = 14 * 60
-const DEFAULT_END_MIN = 15 * 60
-
 export default function App() {
   const [place, setPlace] = useState<Place>(FALLBACK_PLACE)
   const [geo, setGeo] = useState<GeoState>({ status: 'idle' })
-  const [date, setDate] = useState(() => addDays(todayInTz(DEFAULT_TIMEZONE), 1))
+  // null means "the default date": tomorrow, wherever the selected place is.
+  const [pickedDate, setPickedDate] = useState<string | null>(null)
   const [startMin, setStartMin] = useState(DEFAULT_START_MIN)
   const [endMin, setEndMin] = useState(DEFAULT_END_MIN)
   const [sliderMin, setSliderMin] = useState(DEFAULT_START_MIN)
@@ -47,6 +48,7 @@ export default function App() {
   const timezone = lookedUpTimezone ?? place.timezone ?? DEFAULT_TIMEZONE
   const today = todayInTz(timezone)
   const lastForecastDate = addDays(today, FORECAST_DAYS - 1)
+  const date = pickedDate ?? addDays(today, DEFAULT_DATE_OFFSET_DAYS)
   const forecastOffset = diffDays(today, date)
   const inForecastRange = forecastOffset >= 0 && forecastOffset < FORECAST_DAYS
   const forecast = useForecast(target.lat, target.lon, date, inForecastRange)
@@ -119,6 +121,14 @@ export default function App() {
       point ? analyzePoint([point.lon, point.lat], buildings, date, startMin, windowEnd, timezone) : null,
     [point, buildings, date, startMin, windowEnd, timezone],
   )
+
+  const isDefaultWhen = pickedDate === null && startMin === DEFAULT_START_MIN && endMin === DEFAULT_END_MIN
+  const resetWhen = () => {
+    setPickedDate(null)
+    setStartMin(DEFAULT_START_MIN)
+    setEndMin(DEFAULT_END_MIN)
+    setSliderMin(DEFAULT_START_MIN)
+  }
 
   const whenMessage = useMemo(() => {
     if (!windowValid) return 'The end time must be after the start time.'
@@ -215,7 +225,14 @@ export default function App() {
             </section>
 
             <section className="section">
-              <h2 className="section__title">When</h2>
+              <div className="section__head">
+                <h2 className="section__title">When</h2>
+                {!isDefaultWhen && (
+                  <button type="button" className="link-btn section__action" onClick={resetWhen}>
+                    Reset to tomorrow 14:00–15:00
+                  </button>
+                )}
+              </div>
               <TimeControls
                 date={date}
                 startMin={startMin}
@@ -223,7 +240,7 @@ export default function App() {
                 minDate={today}
                 maxDate={lastForecastDate}
                 message={whenMessage}
-                onDateChange={setDate}
+                onDateChange={setPickedDate}
                 onWindowChange={(start, end) => {
                   setStartMin(start)
                   setEndMin(end)

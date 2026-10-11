@@ -140,6 +140,8 @@ export function combinedMessage(
     tail = `, and although cloud cover is ${cloud}% it is thin, so most of it is direct sun: about ${effective} min`
   } else if (share >= 0.8) {
     tail = `, and with ${cloud}% cloud cover nearly all of it is direct sun: about ${effective} min`
+  } else if (share >= 0.4 && cloud >= 80) {
+    tail = `, but under ${cloud}% cloud cover the sun is hazy: about ${effective} min of direct sun`
   } else if (share >= 0.4) {
     tail = `, but with ${cloud}% cloud cover the sun comes and goes: about ${effective} min of direct sun`
   } else {
