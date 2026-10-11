@@ -160,6 +160,12 @@ describe('combinedMessage', () => {
     )
   })
 
+  it('calls the sun hazy when heavy cloud still lets some beam through', () => {
+    expect(combinedMessage(result(50, 10), [hour({ cloudCover: 95 })], 20)).toBe(
+      'Clear of building shadows for 50 of 60 min, but under 95% cloud cover the sun is hazy: about 20 min of direct sun.',
+    )
+  })
+
   it('is upbeat under a clear sky', () => {
     expect(combinedMessage(result(60, 0), [hour()], 57)).toBe(
       'Clear of building shadows for all 60 min, and with 5% cloud cover nearly all of it is direct sun: about 57 min.',
