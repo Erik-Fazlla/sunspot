@@ -24,9 +24,11 @@ import {
   MIN_SHADOW_ZOOM,
   MOVE_DEBOUNCE_MS,
   TERRAIN_ATTRIBUTION,
+  TERRAIN_EXAGGERATION,
   TERRAIN_MAX_ZOOM,
   TERRAIN_TILES_URL,
 } from '../lib/constants'
+import { shadowOpacity, SUNLIGHT_COLOR, sunlightOpacity } from '../lib/overlay'
 import {
   buildingsFromFeatures,
   metersToDegrees,
@@ -44,8 +46,6 @@ const SHADOW_SOURCE = 'sunspot-shadows'
 const SHADOW_LAYER = 'sunspot-shadows'
 const SUNLIGHT_SOURCE = 'sunspot-sunlight'
 const SUNLIGHT_LAYER = 'sunspot-sunlight'
-/** Overlay strength under a clear sky. */
-const SUNLIGHT_OPACITY = 0.3
 // One polygon over the whole map. The shadow layer above it darkens the shaded
 // parts, so the warm tint only reads as sunlit ground and no union is needed.
 const WORLD: FeatureCollection = {
@@ -62,14 +62,6 @@ const WORLD: FeatureCollection = {
   ],
 }
 const EMPTY: FeatureCollection = { type: 'FeatureCollection', features: [] }
-/** Shadow darkness under a clear sky. */
-const SHADOW_OPACITY = 0.42
-/** Under full cloud a faint shadow stays, so the geometry remains readable. */
-const MIN_SHADOW_SHARE = 0.25
-
-function shadowOpacity(sunFactor: number): number {
-  return SHADOW_OPACITY * (MIN_SHADOW_SHARE + (1 - MIN_SHADOW_SHARE) * sunFactor)
-}
 
 // Elevation is loaded twice on purpose: MapLibre advises separate sources for
 // the 3D terrain mesh and the hillshade layer.
@@ -175,7 +167,7 @@ export function MapView({
         position: [1.5, up ? sun.bearingDeg : 210, up ? Math.min(MAX_LIGHT_POLAR_DEG, 90 - sun.altitudeDeg) : 40],
         intensity: up ? 0.55 : 0.15,
         // Low sun is warm; high sun is white.
-        color: phase === 'golden' ? '#ffe0b0' : '#ffffff',
+        color: phase === 'golden' ? '#fff0da' : '#ffffff',
       })
       if (phase !== skyPhaseRef.current) {
         skyPhaseRef.current = phase
@@ -229,6 +221,22 @@ export function MapView({
       ratioQuery.addEventListener('change', onRatioChange)
     }
     watchRatio()
+
+    // Keep the canvas the size of its container. MapLibre tracks resizes itself,
+    // but can lag a step behind; a stale canvas shows up as an empty strip at an edge.
+    let resizeTimer: ReturnType<typeof setTimeout> | undefined
+    const resizeMap = () => {
+      map.resize()
+      // Mobile browsers settle their toolbars a moment after the event.
+      clearTimeout(resizeTimer)
+      resizeTimer = setTimeout(() => map.resize(), 200)
+    }
+    const resizeObserver = new ResizeObserver(resizeMap)
+    resizeObserver.observe(containerRef.current!)
+    window.addEventListener('resize', resizeMap)
+    window.addEventListener('orientationchange', resizeMap)
+    window.visualViewport?.addEventListener('resize', resizeMap)
+
     map.addControl(new NavigationControl({ visualizePitch: true }), 'top-right')
     map.addControl(
       new AttributionControl({
@@ -313,7 +321,7 @@ export function MapView({
           id: SUNLIGHT_LAYER,
           type: 'fill',
           source: SUNLIGHT_SOURCE,
-          paint: { 'fill-color': '#ffdf6b', 'fill-opacity': 0 },
+          paint: { 'fill-color': SUNLIGHT_COLOR, 'fill-opacity': 0 },
         },
         // Below the shadows, so shaded ground is covered by them.
         SHADOW_LAYER,
@@ -336,6 +344,11 @@ export function MapView({
 
     return () => {
       clearTimeout(timer)
+      clearTimeout(resizeTimer)
+      resizeObserver.disconnect()
+      window.removeEventListener('resize', resizeMap)
+      window.removeEventListener('orientationchange', resizeMap)
+      window.visualViewport?.removeEventListener('resize', resizeMap)
       ratioQuery?.removeEventListener('change', onRatioChange)
       map.remove()
       mapRef.current = null
@@ -357,8 +370,9 @@ export function MapView({
   useEffect(() => {
     const map = mapRef.current
     if (!ready || !map?.getLayer(SUNLIGHT_LAYER)) return
-    const visible = showSunlight && hint === null
-    map.setPaintProperty(SUNLIGHT_LAYER, 'fill-opacity', visible ? SUNLIGHT_OPACITY * sunFactor : 0)
+    // `hint` is null exactly when the sun is up and shadows are being drawn.
+    const opacity = showSunlight ? sunlightOpacity(sunFactor, hint === null) : 0
+    map.setPaintProperty(SUNLIGHT_LAYER, 'fill-opacity', opacity)
   }, [ready, showSunlight, sunFactor, hint])
 
   // Terrain is optional: its tiles are only requested once it is switched on.
@@ -383,7 +397,7 @@ export function MapView({
             type: 'hillshade',
             source: HILLSHADE_SOURCE,
             paint: {
-              'hillshade-exaggeration': 0.4,
+              'hillshade-exaggeration': 0.65,
               'hillshade-shadow-color': '#39456b',
               'hillshade-highlight-color': '#fff6dc',
               'hillshade-illumination-anchor': 'map',
@@ -393,7 +407,7 @@ export function MapView({
         )
       }
       map.setLayoutProperty(HILLSHADE_LAYER, 'visibility', 'visible')
-      map.setTerrain({ source: TERRAIN_SOURCE, exaggeration: 1 })
+      map.setTerrain({ source: TERRAIN_SOURCE, exaggeration: TERRAIN_EXAGGERATION })
       // Lifted a little so the terrain surface does not hide the flat shadows.
       map.setPaintProperty(SHADOW_LAYER, 'fill-extrusion-height', SHADOW_LIFT_ON_TERRAIN_M)
       drawRef.current()
