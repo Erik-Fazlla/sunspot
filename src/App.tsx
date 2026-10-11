@@ -4,6 +4,8 @@ import { SearchBox } from './components/SearchBox'
 import { SunArc } from './components/SunArc'
 import { TimeControls } from './components/TimeControls'
 import { TimeSlider } from './components/TimeSlider'
+import { WeatherPanel } from './components/WeatherPanel'
+import { useForecast, useTimezone } from './hooks/useForecast'
 import {
   DEFAULT_TIMEZONE,
   FALLBACK_PLACE,
@@ -32,9 +34,15 @@ export default function App() {
   const [, setBuildings] = useState<Building[]>([])
   const [panelOpen, setPanelOpen] = useState(true)
 
-  const timezone = place.timezone ?? DEFAULT_TIMEZONE
+  // Weather and timezone follow the clicked point when there is one.
+  const target = point ?? place
+  const lookedUpTimezone = useTimezone(target.lat, target.lon, point ? undefined : place.timezone)
+  const timezone = lookedUpTimezone ?? place.timezone ?? DEFAULT_TIMEZONE
   const today = todayInTz(timezone)
   const lastForecastDate = addDays(today, FORECAST_DAYS - 1)
+  const forecastOffset = diffDays(today, date)
+  const inForecastRange = forecastOffset >= 0 && forecastOffset < FORECAST_DAYS
+  const forecast = useForecast(target.lat, target.lon, date, inForecastRange)
 
   const locate = useCallback(() => {
     if (!('geolocation' in navigator)) {
@@ -88,12 +96,11 @@ export default function App() {
 
   const whenMessage = useMemo(() => {
     if (!windowValid) return 'The end time must be after the start time.'
-    const offset = diffDays(today, date)
-    if (offset < 0 || offset >= FORECAST_DAYS) {
+    if (!inForecastRange) {
       return `The forecast only covers ${formatDateLabel(today)} to ${formatDateLabel(lastForecastDate)}. Shadows still work for any date.`
     }
     return null
-  }, [windowValid, today, date, lastForecastDate])
+  }, [windowValid, inForecastRange, today, lastForecastDate])
 
   return (
     <div className="app">
@@ -186,6 +193,14 @@ export default function App() {
                 endMin={windowEnd}
                 currentMin={currentMin}
               />
+            </section>
+
+            <section className="section">
+              <div className="section__head">
+                <h2 className="section__title">Weather</h2>
+                <small>{point ? 'at the marked spot' : 'at the map location'}</small>
+              </div>
+              <WeatherPanel state={forecast} currentMin={currentMin} />
             </section>
 
             <footer className="credits">

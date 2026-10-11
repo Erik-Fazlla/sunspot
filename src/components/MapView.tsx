@@ -188,6 +188,11 @@ export function MapView({ center, sunTime, point, onPointSelect, onBuildingsChan
         },
         map.getLayer(BUILDING_3D_LAYER) ? BUILDING_3D_LAYER : undefined,
       )
+      if (map.getLayer(BUILDING_3D_LAYER)) {
+        // Near-opaque walls keep the shadow under a footprint from tinting the building itself.
+        map.setPaintProperty(BUILDING_3D_LAYER, 'fill-extrusion-opacity', 0.94)
+        map.setPaintProperty(BUILDING_3D_LAYER, 'fill-extrusion-color', '#efeae0')
+      }
       refresh()
     })
     map.on('moveend', scheduleRefresh)
