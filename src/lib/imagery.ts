@@ -37,3 +37,23 @@ export function clampImageryOpacity(value: number): number {
   if (!Number.isFinite(value)) return IMAGERY_DEFAULT_OPACITY
   return Math.min(1, Math.max(IMAGERY_MIN_OPACITY, value))
 }
+
+/** At or below this photo strength the photo is fully muted. */
+export const IMAGERY_MUTED_UNTIL = 0.85
+/** How far a fully muted photo is pushed: greyer, flatter and lighter. */
+export const IMAGERY_MUTED = { saturation: -0.55, contrast: -0.3, brightnessMin: 0.2 } as const
+
+/**
+ * A photo carries the real shadows of the moment it was taken, and they never
+ * move. Muting it (less colour, less contrast, lifted blacks) pushes those old
+ * shadows back so the computed shade reads as the only shade on screen.
+ * `strength` is the photo slider: fully muted up to 85%, untouched at 100%.
+ */
+export function imageryTone(strength: number): { saturation: number; contrast: number; brightnessMin: number } {
+  const muting = Math.min(1, Math.max(0, (1 - strength) / (1 - IMAGERY_MUTED_UNTIL)))
+  return {
+    saturation: IMAGERY_MUTED.saturation * muting,
+    contrast: IMAGERY_MUTED.contrast * muting,
+    brightnessMin: IMAGERY_MUTED.brightnessMin * muting,
+  }
+}

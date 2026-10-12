@@ -74,7 +74,7 @@ export function BasemapControl({
       {basemap === 'satellite' && (
         <label className="opacity">
           <span className="opacity__label">
-            <span>Photo opacity</span>
+            <span>Photo strength</span>
             <strong>{percent}%</strong>
           </span>
           <input
@@ -86,7 +86,7 @@ export function BasemapControl({
             style={{ '--fill': `${fill}%` } as CSSProperties}
             onChange={(event) => onImageryOpacityChange(Number(event.target.value))}
           />
-          <small>Lower it if the computed shadows are hard to see over the photo.</small>
+          <small>100% shows the untouched photo. Lower values mute it so the blue shade stands out.</small>
         </label>
       )}
     </div>

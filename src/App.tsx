@@ -24,7 +24,7 @@ import { clampImageryOpacity, IMAGERY_DEFAULT_OPACITY } from './lib/imagery'
 import { hourSunFactor } from './lib/sunFactor'
 import type { Place } from './lib/geocode'
 import type { Building } from './lib/shadow'
-import { addDays, diffDays, formatDateLabel, todayInTz, zonedToUtc } from './lib/time'
+import { addDays, diffDays, formatDateLabel, formatMinutes, todayInTz, zonedToUtc } from './lib/time'
 
 type GeoState = { status: 'idle' } | { status: 'locating' } | { status: 'error'; message: string }
 
@@ -154,6 +154,7 @@ export default function App() {
         showSunDirection={showSunDirection}
         showSunlight={showSunlight}
         showTerrain={showTerrain}
+        shadeTimeLabel={formatMinutes(currentMin)}
         point={point}
         onPointSelect={(selected) => {
           setPoint(selected)
