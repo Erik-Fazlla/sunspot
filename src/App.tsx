@@ -40,7 +40,7 @@ export default function App() {
   const [point, setPoint] = useState<LngLat | null>(null)
   const [buildings, setBuildings] = useState<Building[]>([])
   const [panelOpen, setPanelOpen] = useState(true)
-  const [showSunlight, setShowSunlight] = useStoredBoolean('sunspot:sunlight-overlay', false)
+  const [showSunHours, setShowSunHours] = useStoredBoolean('sunspot:sun-hours', false)
   const [showTerrain, setShowTerrain] = useStoredBoolean('sunspot:terrain', false)
   const [showSunDirection, setShowSunDirection] = useStoredBoolean('sunspot:sun-direction', true)
   const [basemap, setBasemap] = useStoredChoice<Basemap>('sunspot:basemap', 'map', ['map', 'satellite'])
@@ -156,7 +156,7 @@ export default function App() {
         basemap={basemap}
         imageryOpacity={imageryOpacity}
         showSunDirection={showSunDirection}
-        showSunlight={showSunlight}
+        showSunHours={showSunHours}
         showTerrain={showTerrain}
         shadeTimeLabel={formatMinutes(currentMin)}
         point={point}
@@ -304,11 +304,11 @@ export default function App() {
                     onChange: setShowSunDirection,
                   },
                   {
-                    id: 'sunlight',
-                    label: 'Sunlight overlay',
-                    hint: 'Warm tint on sunlit ground, paler under cloud',
-                    checked: showSunlight,
-                    onChange: setShowSunlight,
+                    id: 'sun-hours',
+                    label: 'Sun hours',
+                    hint: 'Colours the ground by how long it is in the sun during your time window (replaces the shade)',
+                    checked: showSunHours,
+                    onChange: setShowSunHours,
                   },
                   {
                     id: 'terrain',

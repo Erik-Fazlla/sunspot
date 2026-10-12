@@ -125,7 +125,7 @@ p {
 
 .map-legend {
   position: absolute;
-  bottom: 44px;
+  bottom: 58px;
   /* Centred in the part of the map the panel leaves free. */
   left: calc(50% + 202px);
   transform: translateX(-50%);
@@ -154,6 +154,40 @@ p {
 .map-legend strong {
   color: var(--ink);
   font-weight: 600;
+}
+
+/* The sun-hours legend has one chip per colour band and may wrap onto two lines. */
+.map-legend--hours {
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 5px 12px;
+  border-radius: 16px;
+}
+
+.map-legend--hours strong {
+  flex-basis: 100%;
+  text-align: center;
+}
+
+.map-legend__band {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.map-legend--hours i {
+  width: 13px;
+  height: 13px;
+  border: 1px solid rgba(20, 26, 45, 0.35);
+  opacity: 1;
+}
+
+.map-legend__note {
+  flex-basis: 100%;
+  text-align: center;
+  font-size: 11.5px;
+  opacity: 0.8;
 }
 
 .panel {
