@@ -1350,12 +1350,23 @@ p {
     padding: 0 14px;
   }
 
+  /* At the top, between the credits button on the left and the zoom buttons on the right. */
   .map-legend {
-    top: 56px;
+    top: 10px;
     bottom: auto;
     left: 50%;
-    max-width: calc(100vw - 24px);
+    max-width: calc(100vw - 108px);
     border-radius: 14px;
+  }
+
+  .map-legend--hours {
+    gap: 3px 10px;
+    padding: 6px 10px;
+    font-size: 12px;
+  }
+
+  .map-legend__note {
+    font-size: 11px;
   }
 
   .map-hint {

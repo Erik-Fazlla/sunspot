@@ -1,4 +1,4 @@
-import { useEffect, useReducer } from 'react'
+import { useEffect, useLayoutEffect, useReducer, useState } from 'react'
 import type { Map as MapLibreMap } from 'maplibre-gl'
 import { metersToDegrees } from '../lib/shadow'
 import type { SunPosition } from '../lib/sun'
@@ -40,6 +40,17 @@ function direction(from: ScreenPoint, to: ScreenPoint) {
   return length > 0 ? { x: dx / length, y: dy / length, length } : { x: 0, y: -1, length: 0 }
 }
 
+/** How much of the map the legend (at the top) and the bottom sheet cover on a phone, in pixels. */
+function measurePhoneInsets(container: HTMLElement): { top: number; bottom: number } {
+  const box = container.getBoundingClientRect()
+  const legend = document.querySelector('.map-legend')?.getBoundingClientRect()
+  const panel = document.querySelector('.panel')?.getBoundingClientRect()
+  return {
+    top: legend ? Math.max(0, Math.round(legend.bottom - box.top)) : 0,
+    bottom: panel ? Math.max(0, Math.round(box.bottom - panel.top)) : 0,
+  }
+}
+
 /**
  * The sun's path for the day, laid on the ground like a compass: the ring is
  * the horizon, the middle is straight overhead. It follows the map as it
@@ -59,11 +70,32 @@ export function SunPathOverlay({ map, day, windowStartMin, windowEndMin, sun, la
 
   const { clientWidth: width, clientHeight: height } = map.getContainer()
   const wide = window.matchMedia('(min-width: 721px)').matches
-  // Wide screens: keep clear of the panel on the left. Phones: stay above the bottom sheet.
+
+  // On phones the legend sits at the top and the bottom sheet opens and closes,
+  // so the free part of the map is measured rather than assumed. Measuring has
+  // to wait until the page is laid out, hence after every render.
+  const [phone, setPhone] = useState(() => measurePhoneInsets(map.getContainer()))
+  useLayoutEffect(() => {
+    if (wide) return
+    const next = measurePhoneInsets(map.getContainer())
+    setPhone((previous) => (previous.top === next.top && previous.bottom === next.bottom ? previous : next))
+  })
+  useEffect(() => {
+    const panel = document.querySelector('.panel')
+    if (!panel) return
+    // The sheet animates open and closed without the map moving.
+    const observer = new ResizeObserver(redraw)
+    observer.observe(panel)
+    return () => observer.disconnect()
+  }, [])
+
+  // Wide screens: keep clear of the panel on the left. Phones: stay between the legend and the sheet.
   const frame = domeFrame(
     width,
     height,
-    wide ? { left: PANEL_WIDTH_PX, right: 0, top: 0, bottom: 0 } : { left: 0, right: 0, top: 0, bottom: height * 0.5 },
+    wide
+      ? { left: PANEL_WIDTH_PX, right: 0, top: 0, bottom: 0 }
+      : { left: 0, right: 0, top: phone.top, bottom: phone.bottom },
   )
   // The dome lies on the ground under the middle of the free map area, sized
   // by how many metres a pixel covers there.

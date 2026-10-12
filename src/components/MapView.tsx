@@ -476,6 +476,13 @@ export function MapView({
         map.setPaintProperty(BUILDING_3D_LAYER, 'fill-extrusion-opacity', BUILDING_OPACITY_ON_MAP)
         map.setPaintProperty(BUILDING_3D_LAYER, 'fill-extrusion-color', '#efeae0')
       }
+      if (compact) {
+        // MapLibre opens the credits on load. On a phone they would cover the legend
+        // and the zoom buttons, so they start folded behind their "i" button.
+        const credits = map.getContainer().querySelector('.maplibregl-ctrl-attrib')
+        credits?.classList.remove('maplibregl-compact-show')
+        credits?.removeAttribute('open')
+      }
       setReady(true)
       setLoadedMap(map)
       refresh()
