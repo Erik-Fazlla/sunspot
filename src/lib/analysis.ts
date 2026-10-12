@@ -11,7 +11,7 @@ import {
   type HourWeather,
 } from './weatherLabel'
 
-/** sun = nothing in the way, shade = a building or tree blocks it, night = the sun is below the horizon. */
+/** sun = nothing in the way, shade = a building blocks it, night = the sun is below the horizon. */
 export type SampleState = 'sun' | 'shade' | 'night'
 
 export interface Sample {
@@ -30,7 +30,7 @@ export interface PointAnalysis {
    * Says nothing about clouds; see `effectiveSunMinutes`.
    */
   sunMinutes: number
-  /** Blocked by a building or a tree while the sun is up. */
+  /** Blocked by a building while the sun is up. */
   shadeMinutes: number
   /** Sun below the horizon: counted as "no sun". */
   nightMinutes: number

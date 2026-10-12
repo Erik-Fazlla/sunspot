@@ -17,7 +17,7 @@ interface Props {
   onClear: () => void
 }
 
-const STATE_LABEL = { sun: 'no shadow', shade: 'shade from a building or tree', night: 'sun below horizon' } as const
+const STATE_LABEL = { sun: 'no shadow', shade: 'building shade', night: 'sun below horizon' } as const
 
 function sunText(sun: SunPosition): string {
   if (sun.altitudeDeg <= 0) return 'below horizon'

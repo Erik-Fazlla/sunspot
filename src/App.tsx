@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { LayerToggles } from './components/LayerToggles'
-import { MapView, type LngLat } from './components/MapView'
+import { BasemapControl, LayerToggles } from './components/LayerToggles'
+import { MapView, type Basemap, type LngLat } from './components/MapView'
 import { ResultCard } from './components/ResultCard'
 import { SearchBox } from './components/SearchBox'
 import { SunArc } from './components/SunArc'
@@ -8,8 +8,7 @@ import { TimeControls } from './components/TimeControls'
 import { TimeSlider } from './components/TimeSlider'
 import { WeatherPanel } from './components/WeatherPanel'
 import { useForecast, useTimezone } from './hooks/useForecast'
-import { useStreetFurniture, type MapViewState, type StreetDetails } from './hooks/useStreetFurniture'
-import { useStoredBoolean } from './hooks/useStoredBoolean'
+import { useStoredBoolean, useStoredChoice, useStoredNumber } from './hooks/useStoredBoolean'
 import {
   DEFAULT_DATE_OFFSET_DAYS,
   DEFAULT_END_MIN,
@@ -21,21 +20,11 @@ import {
   STEP_MINUTES,
 } from './lib/constants'
 import { analyzePoint } from './lib/analysis'
-import { MAX_BENCHES, MAX_TREES, nearest, treeCaster } from './lib/furniture'
+import { clampImageryOpacity, IMAGERY_DEFAULT_OPACITY } from './lib/imagery'
 import { hourSunFactor } from './lib/sunFactor'
 import type { Place } from './lib/geocode'
 import type { Building } from './lib/shadow'
 import { addDays, diffDays, formatDateLabel, todayInTz, zonedToUtc } from './lib/time'
-
-/** One line under the Street details switch: what is shown, or why nothing is. */
-function streetDetailsHint(street: StreetDetails, shown: { benches: number; trees: number; lamps: number } | null): string {
-  if (street.status === 'off') return 'Benches, trees and street lamps from OpenStreetMap'
-  if (street.status === 'zoom') return 'Zoom in to load benches, trees and lamps'
-  if (street.status === 'unavailable') return 'Street details unavailable right now'
-  if (street.status === 'loading' || !shown) return 'Loading street details…'
-  if (shown.benches + shown.trees + shown.lamps === 0) return 'Nothing mapped here in OpenStreetMap yet'
-  return `${shown.benches} benches · ${shown.trees} trees · ${shown.lamps} lamps`
-}
 
 type GeoState = { status: 'idle' } | { status: 'locating' } | { status: 'error'; message: string }
 
@@ -53,23 +42,10 @@ export default function App() {
   const [panelOpen, setPanelOpen] = useState(true)
   const [showSunlight, setShowSunlight] = useStoredBoolean('sunspot:sunlight-overlay', false)
   const [showTerrain, setShowTerrain] = useStoredBoolean('sunspot:terrain', false)
-  const [showStreet, setShowStreet] = useStoredBoolean('sunspot:street-details', true)
-  const [view, setView] = useState<MapViewState | null>(null)
-  const street = useStreetFurniture(view, showStreet)
-
-  // What is actually drawn: capped to the items nearest the map centre.
-  const viewCenter = view?.center
-  const furniture = useMemo(() => {
-    if (!street.furniture || !viewCenter) return null
-    return {
-      benches: nearest(street.furniture.benches, viewCenter, MAX_BENCHES),
-      trees: nearest(street.furniture.trees, viewCenter, MAX_TREES),
-      lamps: street.furniture.lamps,
-    }
-    // The centre only matters for picking the nearest items of a given result.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [street.furniture])
-  const treeCasters = useMemo(() => furniture?.trees.map(treeCaster) ?? [], [furniture])
+  const [showSunDirection, setShowSunDirection] = useStoredBoolean('sunspot:sun-direction', true)
+  const [basemap, setBasemap] = useStoredChoice<Basemap>('sunspot:basemap', 'map', ['map', 'satellite'])
+  const [storedOpacity, setImageryOpacity] = useStoredNumber('sunspot:imagery-opacity', IMAGERY_DEFAULT_OPACITY)
+  const imageryOpacity = clampImageryOpacity(storedOpacity)
 
   // Weather and timezone follow the clicked point when there is one.
   const target = point ?? place
@@ -147,10 +123,8 @@ export default function App() {
 
   const analysis = useMemo(
     () =>
-      point
-        ? analyzePoint([point.lon, point.lat], [...buildings, ...treeCasters], date, startMin, windowEnd, timezone)
-        : null,
-    [point, buildings, treeCasters, date, startMin, windowEnd, timezone],
+      point ? analyzePoint([point.lon, point.lat], buildings, date, startMin, windowEnd, timezone) : null,
+    [point, buildings, date, startMin, windowEnd, timezone],
   )
 
   const isDefaultWhen = pickedDate === null && startMin === DEFAULT_START_MIN && endMin === DEFAULT_END_MIN
@@ -174,12 +148,12 @@ export default function App() {
       <MapView
         center={place}
         sunTime={sunTime}
-        sunFactor={currentFactor ?? 1}
+        sunStrength={currentFactor}
+        basemap={basemap}
+        imageryOpacity={imageryOpacity}
+        showSunDirection={showSunDirection}
         showSunlight={showSunlight}
         showTerrain={showTerrain}
-        furniture={furniture}
-        treeCasters={treeCasters}
-        onViewChange={setView}
         point={point}
         onPointSelect={(selected) => {
           setPoint(selected)
@@ -309,8 +283,21 @@ export default function App() {
 
             <section className="section">
               <h2 className="section__title">Map layers</h2>
+              <BasemapControl
+                basemap={basemap}
+                onBasemapChange={setBasemap}
+                imageryOpacity={imageryOpacity}
+                onImageryOpacityChange={setImageryOpacity}
+              />
               <LayerToggles
                 toggles={[
+                  {
+                    id: 'sun-direction',
+                    label: 'Sun direction',
+                    hint: 'Sun icon and rays showing where the light comes from',
+                    checked: showSunDirection,
+                    onChange: setShowSunDirection,
+                  },
                   {
                     id: 'sunlight',
                     label: 'Sunlight overlay',
@@ -321,23 +308,9 @@ export default function App() {
                   {
                     id: 'terrain',
                     label: '3D terrain',
-                    hint: 'Hills and hillshade (shadows still assume flat ground)',
+                    hint: 'Approximate relief at true scale (coarse 30 m data); shadows assume flat ground',
                     checked: showTerrain,
                     onChange: setShowTerrain,
-                  },
-                  {
-                    id: 'street',
-                    label: 'Street details',
-                    hint: streetDetailsHint(
-                      street,
-                      furniture && {
-                        benches: furniture.benches.length,
-                        trees: furniture.trees.length,
-                        lamps: furniture.lamps.length,
-                      },
-                    ),
-                    checked: showStreet,
-                    onChange: setShowStreet,
                   },
                 ]}
               />
@@ -348,11 +321,7 @@ export default function App() {
               <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">
                 OpenStreetMap
               </a>{' '}
-              contributors (ODbL), including street details via the{' '}
-              <a href="https://overpass-api.de" target="_blank" rel="noreferrer">
-                Overpass API
-              </a>{' '}
-              · tiles by{' '}
+              contributors · tiles by{' '}
               <a href="https://openfreemap.org" target="_blank" rel="noreferrer">
                 OpenFreeMap
               </a>{' '}
@@ -367,7 +336,12 @@ export default function App() {
                 rel="noreferrer"
               >
                 Mapzen, AWS Terrain Tiles
-              </a>
+              </a>{' '}
+              · satellite imagery powered by{' '}
+              <a href="https://www.esri.com" target="_blank" rel="noreferrer">
+                Esri
+              </a>{' '}
+              (Esri, Maxar, Earthstar Geographics, and the GIS User Community)
             </footer>
           </div>
         </div>

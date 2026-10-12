@@ -1,3 +1,7 @@
+import type { CSSProperties } from 'react'
+import { IMAGERY_MIN_OPACITY } from '../lib/imagery'
+import type { Basemap } from './MapView'
+
 export interface LayerToggle {
   id: string
   label: string
@@ -25,6 +29,66 @@ export function LayerToggles({ toggles }: { toggles: LayerToggle[] }) {
           </span>
         </label>
       ))}
+    </div>
+  )
+}
+
+const BASEMAPS: { id: Basemap; label: string }[] = [
+  { id: 'map', label: 'Map' },
+  { id: 'satellite', label: 'Satellite' },
+]
+
+interface BasemapControlProps {
+  basemap: Basemap
+  onBasemapChange: (basemap: Basemap) => void
+  /** Opacity of the satellite photo, IMAGERY_MIN_OPACITY to 1. */
+  imageryOpacity: number
+  onImageryOpacityChange: (opacity: number) => void
+}
+
+/** Map / Satellite switch, with an opacity slider for the photo while it is shown. */
+export function BasemapControl({
+  basemap,
+  onBasemapChange,
+  imageryOpacity,
+  onImageryOpacityChange,
+}: BasemapControlProps) {
+  const percent = Math.round(imageryOpacity * 100)
+  const fill = ((imageryOpacity - IMAGERY_MIN_OPACITY) / (1 - IMAGERY_MIN_OPACITY)) * 100
+  return (
+    <div className="basemap">
+      <div className="segmented" role="radiogroup" aria-label="Basemap">
+        {BASEMAPS.map((option) => (
+          <button
+            key={option.id}
+            type="button"
+            role="radio"
+            aria-checked={basemap === option.id}
+            className={`segmented__option${basemap === option.id ? ' is-active' : ''}`}
+            onClick={() => onBasemapChange(option.id)}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+      {basemap === 'satellite' && (
+        <label className="opacity">
+          <span className="opacity__label">
+            <span>Photo opacity</span>
+            <strong>{percent}%</strong>
+          </span>
+          <input
+            type="range"
+            min={IMAGERY_MIN_OPACITY}
+            max={1}
+            step={0.05}
+            value={imageryOpacity}
+            style={{ '--fill': `${fill}%` } as CSSProperties}
+            onChange={(event) => onImageryOpacityChange(Number(event.target.value))}
+          />
+          <small>Lower it if the computed shadows are hard to see over the photo.</small>
+        </label>
+      )}
     </div>
   )
 }

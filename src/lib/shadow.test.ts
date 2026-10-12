@@ -9,10 +9,12 @@ import {
   convexHull,
   isConvexRing,
   isPointInShade,
+  isShadedBy,
   makeBuilding,
   metersToDegrees,
   shadowOffset,
   shadowPieces,
+  shadowSweep,
   type Ring,
 } from './shadow'
 
@@ -173,5 +175,55 @@ describe('buildingsFromFeatures', () => {
     expect(buildings).toHaveLength(2)
     expect(buildings[0]).toMatchObject({ id: 1, height: 9, convex: true })
     expect(buildings[1]).toMatchObject({ id: 3, height: FALLBACK_BUILDING_HEIGHT_M, convex: false })
+  })
+})
+
+describe('isShadedBy: the line test behind isPointInShade', () => {
+  const lShape = makeBuilding(L_SHAPE, 15)
+  const suns = [
+    SUN_SOUTH_45,
+    SUN_EAST_45,
+    { altitudeRad: rad(20), bearingDeg: 250 },
+    { altitudeRad: rad(60), bearingDeg: 100 },
+  ]
+
+  it('agrees with the shadow polygon on a grid of points around a concave building', () => {
+    for (const sun of suns) {
+      const shadow = buildShadowPolygon(lShape, shadowOffset(lShape.height, sun, ORIGIN.lat)!)
+      for (let east = -50; east <= 70; east += 3.7) {
+        for (let north = -50; north <= 70; north += 3.7) {
+          const point = at(east, north)
+          expect(isShadedBy(point, lShape, sun), `${east},${north}`).toBe(booleanPointInPolygon(point, shadow))
+        }
+      }
+    }
+  })
+
+  it('is false when the sun is down', () => {
+    expect(isShadedBy(at(10, 25), lShape, { altitudeRad: -0.1, bearingDeg: 180 })).toBe(false)
+  })
+})
+
+describe('shadowSweep', () => {
+  it('sweeps a grounded building from its footprint by the full shadow offset', () => {
+    const building = makeBuilding(SQUARE, 10)
+    const sweep = shadowSweep(building, SUN_SOUTH_45, ORIGIN.lat)!
+    expect(sweep.ring).toBe(SQUARE)
+    expect(sweep.offset).toEqual(shadowOffset(10, SUN_SOUTH_45, ORIGIN.lat))
+  })
+
+  it('starts the sweep of a floating solid where its underside lands', () => {
+    // A slab from 4 m to 10 m up: its shadow runs from 4 m to 10 m north of the footprint.
+    const slab = makeBuilding(SQUARE, 10, 'slab', 4)
+    expect(isShadedBy(at(10, 27), slab, SUN_SOUTH_45)).toBe(true)
+    expect(isShadedBy(at(10, 31), slab, SUN_SOUTH_45)).toBe(false)
+    // Directly below the slab, near its sunny edge, the ground is lit.
+    expect(isShadedBy(at(10, 2), slab, SUN_SOUTH_45)).toBe(false)
+    // A point under a floating solid is not "inside" it, so nothing is excluded.
+    expect(isPointInShade(at(10, 10), [slab], SUN_SOUTH_45)).toBe(true)
+  })
+
+  it('casts nothing when the sun is down', () => {
+    expect(shadowSweep(makeBuilding(SQUARE, 10), { altitudeRad: -0.1, bearingDeg: 180 }, ORIGIN.lat)).toBeNull()
   })
 })

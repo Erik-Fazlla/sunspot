@@ -11,6 +11,7 @@ import {
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import type { Feature, FeatureCollection } from 'geojson'
+import { applyCleanBasemap } from '../lib/basemap'
 import {
   BUILDING_3D_LAYER,
   BUILDING_SOURCE,
@@ -28,27 +29,17 @@ import {
   TERRAIN_MAX_ZOOM,
   TERRAIN_TILES_URL,
 } from '../lib/constants'
-import type { MapViewState } from '../hooks/useStreetFurniture'
-import { applyCleanBasemap } from '../lib/basemap'
-import {
-  BENCH_COLORS,
-  benchFeatures,
-  benchStates,
-  castersNearBenches,
-  furnitureFeatures,
-  type BenchState,
-} from '../lib/furniture'
-import type { StreetFurniture } from '../lib/overpass'
+import { ESRI_ATTRIBUTION, esriImageryTileUrl, IMAGERY_MAX_ZOOM } from '../lib/imagery'
 import { shadowOpacity, SUNLIGHT_COLOR, sunlightOpacity } from '../lib/overlay'
 import {
   buildingsFromFeatures,
   metersToDegrees,
   shadowOffset,
   shadowRenderGeometry,
-  shadowSweep,
   type Building,
 } from '../lib/shadow'
 import { getSunPosition, type SunPosition } from '../lib/sun'
+import { sunDirectionLabel, sunIndicatorPosition } from '../lib/sunIndicator'
 
 // Vite pre-bundles maplibre-gl, so its "worker next to the module" lookup
 // would miss. Point it at a worker bundle Vite builds for us.
@@ -75,13 +66,12 @@ const WORLD: FeatureCollection = {
 }
 const EMPTY: FeatureCollection = { type: 'FeatureCollection', features: [] }
 
-// Trees and lamps are extruded shapes; benches are flat dots coloured by sun or shade.
-const FURNITURE_SOURCE = 'sunspot-furniture'
-const FURNITURE_LAYER = 'sunspot-furniture'
-const BENCH_SOURCE = 'sunspot-benches'
-const BENCH_LAYER = 'sunspot-benches'
-const STREET_DETAILS_ATTRIBUTION =
-  'Street details © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap contributors</a> (ODbL)'
+const IMAGERY_SOURCE = 'sunspot-imagery'
+const IMAGERY_LAYER = 'sunspot-imagery'
+/** Near-opaque walls keep the shadow under a footprint from tinting the building itself. */
+const BUILDING_OPACITY_ON_MAP = 0.94
+/** Over a photo the 3D buildings turn into faint glass boxes, so the real roofs show through. */
+const BUILDING_OPACITY_ON_IMAGERY = 0.28
 
 // Elevation is loaded twice on purpose: MapLibre advises separate sources for
 // the 3D terrain mesh and the hillshade layer.
@@ -94,6 +84,8 @@ const SHADOW_LIFT_ON_TERRAIN_M = 1.5
 
 /** Keeps roofs readable at sunrise and sunset, when a true sun angle would leave them dark. */
 const MAX_LIGHT_POLAR_DEG = 55
+/** Width the control panel takes on wide screens; the sun indicator stays clear of it. */
+const PANEL_WIDTH_PX = 404
 
 type SkyPhase = 'day' | 'golden' | 'night'
 
@@ -119,6 +111,8 @@ export interface LngLat {
   lon: number
 }
 
+export type Basemap = 'map' | 'satellite'
+
 type Hint = 'zoom' | 'night' | null
 
 const HINT_TEXT: Record<Exclude<Hint, null>, string> = {
@@ -130,73 +124,87 @@ interface Props {
   center: LngLat
   /** The instant whose shadows are drawn. */
   sunTime: Date
-  /** 0 to 1: how much direct sun the weather lets through. Fades the shadows under cloud. */
-  sunFactor: number
+  /** 0 to 1: how much direct sun the weather lets through; null without a forecast. */
+  sunStrength: number | null
+  /** The drawn map, or a satellite photo under the shadows. */
+  basemap: Basemap
+  /** Opacity of the satellite photo, 0 to 1. */
+  imageryOpacity: number
+  /** Show where the sunlight comes from. */
+  showSunDirection: boolean
   /** Tint sunlit ground with a warm overlay. */
   showSunlight: boolean
   /** 3D terrain and hillshade from free elevation tiles. */
   showTerrain: boolean
-  /** Benches, trees and lamps to draw; null hides them. */
-  furniture: StreetFurniture | null
-  /** The trees of `furniture` as shadow casters (see lib/furniture.ts). */
-  treeCasters: Building[]
   point: LngLat | null
   onPointSelect: (point: LngLat) => void
   /** Called with every building in the loaded tiles whenever that set changes. */
   onBuildingsChange: (buildings: Building[]) => void
-  /** Called after the map settles on a new view. */
-  onViewChange: (view: MapViewState) => void
 }
 
 export function MapView({
   center,
   sunTime,
-  sunFactor,
+  sunStrength,
+  basemap,
+  imageryOpacity,
+  showSunDirection,
   showSunlight,
   showTerrain,
-  furniture,
-  treeCasters,
   point,
   onPointSelect,
   onBuildingsChange,
-  onViewChange,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
+  const indicatorRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MapLibreMap | null>(null)
   const markerRef = useRef<Marker | null>(null)
   const buildingsRef = useRef<Building[]>([])
   const visibleRef = useRef<Building[]>([])
   const signatureRef = useRef('')
   const drawRef = useRef<() => void>(() => {})
-  const callbacksRef = useRef({ onPointSelect, onBuildingsChange, onViewChange })
-  const viewSignatureRef = useRef('')
-  // Street furniture as the draw loop needs it; `benchCasters[i]` are the casters near bench i.
-  const streetRef = useRef<{ benches: StreetFurniture['benches']; treeCasters: Building[]; benchCasters: Building[][] }>({
-    benches: [],
-    treeCasters: [],
-    benchCasters: [],
-  })
-  const linkBenchesRef = useRef<() => void>(() => {})
-  const benchSignatureRef = useRef('')
+  const placeIndicatorRef = useRef<() => void>(() => {})
+  const sunRef = useRef<SunPosition | null>(null)
+  const callbacksRef = useRef({ onPointSelect, onBuildingsChange })
   const [hint, setHint] = useState<Hint>(null)
   const [ready, setReady] = useState(false)
+  // Without a forecast the map is drawn as under a clear sky.
+  const sunFactor = sunStrength ?? 1
   const appearanceRef = useRef({ sunFactor })
   const skyPhaseRef = useRef<SkyPhase | null>(null)
 
   useEffect(() => {
-    callbacksRef.current = { onPointSelect, onBuildingsChange, onViewChange }
+    callbacksRef.current = { onPointSelect, onBuildingsChange }
   })
 
-  // Pairs each bench with the buildings and trees close enough to shade it.
-  // Done when the view or the furniture changes, not on every slider step.
+  // Moves the sun icon to the screen direction the light comes from. Runs on
+  // every camera frame, so it writes straight to the element instead of going
+  // through React state.
   useEffect(() => {
-    linkBenchesRef.current = () => {
-      const street = streetRef.current
-      street.benchCasters = castersNearBenches(
-        street.benches,
-        [...visibleRef.current, ...street.treeCasters],
-        MAX_SHADOW_LENGTH_M,
-      )
+    placeIndicatorRef.current = () => {
+      const map = mapRef.current
+      const element = indicatorRef.current
+      const sun = sunRef.current
+      if (!map || !element || !sun || sun.altitudeRad <= 0) return
+      const mapCenter = map.getCenter()
+      // A point 300 m toward the sun, projected to the screen, gives the
+      // direction exactly, whatever the map's rotation and tilt.
+      const bearing = (sun.bearingDeg * Math.PI) / 180
+      const step = metersToDegrees(300 * Math.sin(bearing), 300 * Math.cos(bearing), mapCenter.lat)
+      const from = map.project(mapCenter)
+      const to = map.project([mapCenter.lng + step.dLon, mapCenter.lat + step.dLat])
+      const angle = Math.atan2(to.y - from.y, to.x - from.x)
+      const { clientWidth: width, clientHeight: height } = map.getContainer()
+      const wide = window.matchMedia('(min-width: 721px)').matches
+      // Wide screens: keep clear of the panel on the left. Phones: stay above the bottom sheet.
+      const insets = wide
+        ? { left: PANEL_WIDTH_PX, right: 0, top: 0, bottom: 0 }
+        : { left: 0, right: 0, top: 0, bottom: height * 0.5 }
+      const position = sunIndicatorPosition(angle, width, height, insets)
+      element.style.setProperty('--sun-x', `${position.x.toFixed(1)}px`)
+      element.style.setProperty('--sun-y', `${position.y.toFixed(1)}px`)
+      // The rays leave the sun and travel across the map, away from it.
+      element.style.setProperty('--ray-angle', `${(angle + Math.PI).toFixed(4)}rad`)
     }
   }, [])
 
@@ -209,6 +217,8 @@ export function MapView({
       const mapCenter = map.getCenter()
       // The sun's direction is effectively the same across one viewport.
       const sun = getSunPosition(sunTime, mapCenter.lat, mapCenter.lng)
+      sunRef.current = sun
+      placeIndicatorRef.current()
       // Light the scene from where the sun actually is: walls facing it are
       // bright, the sky follows the time of day and the hills are shaded to match.
       const up = sun.altitudeRad > 0
@@ -233,19 +243,8 @@ export function MapView({
         }
       }
 
-      const street = streetRef.current
-      const benchSource = map.getSource<GeoJSONSource>(BENCH_SOURCE)
-      // Bench colours rarely change from one slider step to the next; skip the update when they have not.
-      const paintBenches = (states: BenchState[]) => {
-        const signature = `${street.benches.length}:${states.join('')}`
-        if (signature === benchSignatureRef.current) return
-        benchSignatureRef.current = signature
-        benchSource?.setData(benchFeatures(street.benches, states))
-      }
-
       if (map.getZoom() < MIN_SHADOW_ZOOM || sun.altitudeRad <= 0) {
         source.setData(EMPTY)
-        paintBenches(street.benches.map(() => (up ? 'unknown' : 'night')))
         setHint(sun.altitudeRad <= 0 ? 'night' : 'zoom')
         return
       }
@@ -256,14 +255,7 @@ export function MapView({
         if (!offset) continue
         features.push({ type: 'Feature', properties: {}, geometry: shadowRenderGeometry(building, offset) })
       }
-      // Trees go through the same pipeline: a canopy is a footprint that floats above the ground.
-      for (const tree of street.treeCasters) {
-        const sweep = shadowSweep(tree, sun, mapCenter.lat)
-        if (!sweep) continue
-        features.push({ type: 'Feature', properties: {}, geometry: shadowRenderGeometry(sweep, sweep.offset) })
-      }
       source.setData({ type: 'FeatureCollection', features })
-      paintBenches(benchStates(street.benches, street.benchCasters, sun))
       setHint(null)
     }
     drawRef.current()
@@ -296,14 +288,17 @@ export function MapView({
     }
     watchRatio()
 
-    // Keep the canvas the size of its container. MapLibre tracks resizes itself,
-    // but can lag a step behind; a stale canvas shows up as an empty strip at an edge.
+    // Keep the canvas the size of its container, whatever resizes it.
     let resizeTimer: ReturnType<typeof setTimeout> | undefined
     const resizeMap = () => {
       map.resize()
+      placeIndicatorRef.current()
       // Mobile browsers settle their toolbars a moment after the event.
       clearTimeout(resizeTimer)
-      resizeTimer = setTimeout(() => map.resize(), 200)
+      resizeTimer = setTimeout(() => {
+        map.resize()
+        placeIndicatorRef.current()
+      }, 200)
     }
     const resizeObserver = new ResizeObserver(resizeMap)
     resizeObserver.observe(containerRef.current!)
@@ -354,19 +349,6 @@ export function MapView({
         visible = visible.sort((a, b) => distance(a) - distance(b)).slice(0, MAX_SHADOW_BUILDINGS)
       }
       visibleRef.current = visible
-      linkBenchesRef.current()
-
-      // Report the view, but only when it has really changed.
-      const view: MapViewState = {
-        zoom: map.getZoom(),
-        bounds: [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()],
-        center: [mapCenter.lng, mapCenter.lat],
-      }
-      const viewSignature = `${view.zoom.toFixed(1)}:${view.bounds.map((value) => value.toFixed(4)).join(',')}`
-      if (viewSignature !== viewSignatureRef.current) {
-        viewSignatureRef.current = viewSignature
-        callbacksRef.current.onViewChange(view)
-      }
       // Tile loads fire often; only tell React when the set really changed.
       const first = buildings[0]?.bbox[0] ?? 0
       const last = buildings[buildings.length - 1]?.bbox[0] ?? 0
@@ -414,58 +396,14 @@ export function MapView({
         // Below the shadows, so shaded ground is covered by them.
         SHADOW_LAYER,
       )
-      // Trees and lamps stand among the buildings, below the labels.
-      const layerIds = map.getStyle().layers.map((layer) => layer.id)
-      const aboveBuildings = layerIds[layerIds.indexOf(BUILDING_3D_LAYER) + 1]
-      map.addSource(FURNITURE_SOURCE, { type: 'geojson', data: EMPTY, attribution: STREET_DETAILS_ATTRIBUTION })
-      map.addLayer(
-        {
-          id: FURNITURE_LAYER,
-          type: 'fill-extrusion',
-          source: FURNITURE_SOURCE,
-          paint: {
-            'fill-extrusion-color': ['get', 'color'],
-            'fill-extrusion-height': ['get', 'height'],
-            'fill-extrusion-base': ['get', 'base'],
-            'fill-extrusion-opacity': 1,
-          },
-        },
-        aboveBuildings,
-      )
-      map.addSource(BENCH_SOURCE, { type: 'geojson', data: EMPTY })
-      map.addLayer(
-        {
-          id: BENCH_LAYER,
-          type: 'circle',
-          source: BENCH_SOURCE,
-          paint: {
-            'circle-radius': ['interpolate', ['linear'], ['zoom'], 15, 2.5, 17, 5, 19, 8],
-            'circle-color': [
-              'match',
-              ['get', 'state'],
-              'sun',
-              BENCH_COLORS.sun,
-              'shade',
-              BENCH_COLORS.shade,
-              'night',
-              BENCH_COLORS.night,
-              BENCH_COLORS.unknown,
-            ],
-            'circle-stroke-color': '#ffffff',
-            'circle-stroke-width': 1.5,
-            'circle-pitch-alignment': 'map',
-          },
-        },
-        aboveBuildings,
-      )
       if (map.getLayer(BUILDING_3D_LAYER)) {
-        // Near-opaque walls keep the shadow under a footprint from tinting the building itself.
-        map.setPaintProperty(BUILDING_3D_LAYER, 'fill-extrusion-opacity', 0.94)
+        map.setPaintProperty(BUILDING_3D_LAYER, 'fill-extrusion-opacity', BUILDING_OPACITY_ON_MAP)
         map.setPaintProperty(BUILDING_3D_LAYER, 'fill-extrusion-color', '#efeae0')
       }
       setReady(true)
       refresh()
     })
+    map.on('move', () => placeIndicatorRef.current())
     map.on('moveend', scheduleRefresh)
     map.on('sourcedata', (event) => {
       if (event.sourceId === BUILDING_SOURCE && map.isSourceLoaded(BUILDING_SOURCE)) scheduleRefresh()
@@ -507,16 +445,43 @@ export function MapView({
     map.setPaintProperty(SUNLIGHT_LAYER, 'fill-opacity', opacity)
   }, [ready, showSunlight, sunFactor, hint])
 
-  // Street furniture: redraw the 3D shapes and re-link benches when the data changes.
+  // Satellite photo under the shadows. Its tiles are only requested once it is switched on.
   useEffect(() => {
     const map = mapRef.current
     if (!ready || !map) return
-    map.getSource<GeoJSONSource>(FURNITURE_SOURCE)?.setData(furniture ? furnitureFeatures(furniture) : EMPTY)
-    streetRef.current = { benches: furniture?.benches ?? [], treeCasters, benchCasters: [] }
-    benchSignatureRef.current = ''
-    linkBenchesRef.current()
-    drawRef.current()
-  }, [ready, furniture, treeCasters])
+    const satellite = basemap === 'satellite'
+    if (satellite && !map.getSource(IMAGERY_SOURCE)) {
+      map.addSource(IMAGERY_SOURCE, {
+        type: 'raster',
+        tiles: [esriImageryTileUrl(import.meta.env.VITE_ESRI_KEY as string | undefined)],
+        tileSize: 256,
+        maxzoom: IMAGERY_MAX_ZOOM,
+        attribution: ESRI_ATTRIBUTION,
+      })
+      // Above the drawn land and roads, below the sunlight tint, shadows, buildings and labels.
+      map.addLayer(
+        { id: IMAGERY_LAYER, type: 'raster', source: IMAGERY_SOURCE, paint: { 'raster-opacity': imageryOpacity } },
+        SUNLIGHT_LAYER,
+      )
+    }
+    if (!map.getLayer(IMAGERY_LAYER)) return
+    map.setLayoutProperty(IMAGERY_LAYER, 'visibility', satellite ? 'visible' : 'none')
+    map.setPaintProperty(IMAGERY_LAYER, 'raster-opacity', imageryOpacity)
+    if (map.getLayer(BUILDING_3D_LAYER)) {
+      map.setPaintProperty(
+        BUILDING_3D_LAYER,
+        'fill-extrusion-opacity',
+        satellite ? BUILDING_OPACITY_ON_IMAGERY : BUILDING_OPACITY_ON_MAP,
+      )
+    }
+  }, [ready, basemap, imageryOpacity])
+
+  // Labels are pale-on-light for the drawn map and white-on-dark over a photo.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!ready || !map) return
+    applyCleanBasemap(map as unknown as Parameters<typeof applyCleanBasemap>[0], basemap === 'satellite')
+  }, [ready, basemap])
 
   // Terrain is optional: its tiles are only requested once it is switched on.
   useEffect(() => {
@@ -540,7 +505,7 @@ export function MapView({
             type: 'hillshade',
             source: HILLSHADE_SOURCE,
             paint: {
-              'hillshade-exaggeration': 0.65,
+              'hillshade-exaggeration': 0.5,
               'hillshade-shadow-color': '#39456b',
               'hillshade-highlight-color': '#fff6dc',
               'hillshade-illumination-anchor': 'map',
@@ -582,10 +547,31 @@ export function MapView({
     }
   }, [point])
 
+  // Label for the indicator. The sun is in practically the same place for the
+  // whole view, so the selected location stands in for the map centre here.
+  const labelSun = getSunPosition(sunTime, center.lat, center.lon)
+  const sunUp = labelSun.altitudeDeg > 0
+  const showIndicator = ready && showSunDirection && sunUp
+
+  // The icon is positioned by `placeIndicatorRef`; place it as soon as it appears.
+  useEffect(() => {
+    if (showIndicator) placeIndicatorRef.current()
+  }, [showIndicator])
+
   return (
     <>
       <div ref={containerRef} className="map" aria-label="3D map" />
       <div className={`map-dim${hint === 'night' ? ' is-night' : ''}`} />
+      <div
+        ref={indicatorRef}
+        className={`sun-indicator${showIndicator ? ' is-visible' : ''}`}
+        role="status"
+        aria-hidden={!showIndicator}
+      >
+        <div className="sun-indicator__rays" aria-hidden="true" />
+        <div className="sun-indicator__sun" aria-hidden="true" />
+        <div className="sun-indicator__label">{sunDirectionLabel(labelSun, sunStrength)}</div>
+      </div>
       {hint && (
         <div className="map-hint" role="status">
           {HINT_TEXT[hint]}
