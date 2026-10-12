@@ -34,8 +34,9 @@ service, so it costs nothing to host.
   itself with an arrow showing where its light comes from and a label such as
   "Sun from SW, 25° up, 48% strength". It turns with the map and moves with the
   slider.
-- Optional map layers, remembered between visits: a warm **sunlight overlay** on
-  sunlit ground, and **3D terrain** with hillshade.
+- Optional map layers, remembered between visits: a **sun-hours map** that
+  colours the ground by how long it is in the sun during your time window, and
+  **3D terrain** with hillshade.
 - A sky that follows the time of day, and building light that comes from where
   the sun actually is.
 
@@ -161,7 +162,7 @@ If the forecast has no direct radiation, or the clear-sky value is under
 sunFactor = 1 - cloud_cover / 100
 ```
 
-sunFactor is used in four places:
+sunFactor is used in three places:
 
 - **Sun label.** The "48% strength" next to the sun on its path is the
   sunFactor of the slider's hour.
@@ -172,8 +173,6 @@ sunFactor is used in four places:
 - **Effective sun minutes.** Each 5-minute sample counts `5 * sunFactor` if it
   is clear of shadows and 0 otherwise. Forty unshaded minutes at sunFactor 0.3
   are 12 effective minutes.
-- **Sunlight overlay.** Its opacity scales with sunFactor too.
-
 ### Which forecast row each number comes from
 
 Open-Meteo's hourly variables use two conventions, and `parseHourly` in
@@ -206,7 +205,7 @@ cloud cover.
   rail and metro stations stay, small and pale; street names stay, small and
   low-contrast; land, water, roads and rail are recoloured to light neutrals.
 - **Satellite.** Esri World Imagery as a raster layer above the drawn land and
-  roads and below the sunlight tint, the shadows, the buildings and the labels.
+  roads and below the sun-hours map, the shadows, the buildings and the labels.
   The 3D buildings turn into faint glass boxes so the real roofs show, and the
   labels switch to white with a dark halo. A **Photo strength** slider (30% to
   100%, default 85%) controls the photo. Up to 85% the photo is also muted
@@ -229,12 +228,21 @@ cloud cover.
   screen, so the drawing turns and tilts with the map. The label gives compass
   direction, height above the horizon and sunFactor. When the sun is down the
   path stays and the sun is left out.
-- **Sunlight overlay** (off by default). One warm yellow, translucent polygon
-  over the whole map, placed just below the shadow layer. Shadows cover it, so
-  only sunlit ground looks tinted. It shows *how much* ground is lit, not where
-  the light comes from; that is the sun path's job. Its opacity
-  (`src/lib/overlay.ts`) is 0 when the sun is down, 0.12 when the sun is up
-  under full cloud, and rises in a straight line to 0.35 at sunFactor 1.
+- **Sun hours** (off by default). Colours the ground by how long it is clear
+  of building shadows during the selected time window (`src/lib/sunHours.ts`).
+  The window is sampled every 5 minutes (at most 13 samples; longer windows are
+  sampled more coarsely). The shade for each sample is painted solid on a
+  scratch canvas and added to the picture at 1/N strength, so each pixel's
+  opacity ends up as the share of the window it was shaded. That share is then
+  turned into one of five bands: no sun (indigo), under a third of the window
+  (purple), a third to two thirds (coral), over two thirds (orange), and sun
+  the whole time, which is left **without colour** so open ground does not
+  turn the map into one flat tint. A legend gives the bands in minutes. While
+  it is on it replaces the blue shade, because the two cannot be read together,
+  and the slider only moves the sun on its path. It counts building shade
+  only: cloud is not included, and a sample with the sun below the horizon
+  counts as shade. It is repainted when the map or the window changes (about a
+  quarter of a second on the test machine), not on slider steps.
 - **3D terrain** (off by default). Elevation tiles drive both the terrain mesh,
   at true scale, and a hillshade layer lit from the sun's bearing. The tiles are
   requested only once the layer is switched on. Shadows are still computed for
@@ -246,7 +254,7 @@ buildings are lit from the sun's real bearing and height, the map renders at
 the screen's `devicePixelRatio`, and the camera can pitch up to 85 degrees.
 
 Settings are stored in `localStorage`: `sunspot:basemap`,
-`sunspot:imagery-opacity`, `sunspot:sun-direction`, `sunspot:sunlight-overlay`
+`sunspot:imagery-opacity`, `sunspot:sun-direction`, `sunspot:sun-hours`
 and `sunspot:terrain`.
 
 ### Satellite imagery and the Esri key

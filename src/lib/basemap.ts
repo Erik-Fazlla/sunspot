@@ -1,5 +1,5 @@
 // Restyles the OpenFreeMap "liberty" style into a quiet backdrop, so that the
-// shadows and the sunlight overlay are what the eye lands on. Everything here
+// shadows and the sun-hours map are what the eye lands on. Everything here
 // is a paint, layout or filter override applied after the style loads; the
 // tiles and the style URL stay the same.
 
