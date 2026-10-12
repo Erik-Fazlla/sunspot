@@ -22,14 +22,33 @@ service, so it costs nothing to host.
   clear of building shadows) and **effective sun** (those minutes weighted by
   how much direct beam the weather lets through). It also shows the sun's
   altitude and bearing at the start and end, the weather label for each hour of
-  the window, and a verdict such as "Clear of building shadows for 40 of 60 min,
-  but with 80% cloud cover the light is mostly diffuse: only about 12 min of
-  direct sun."
+  the window, and a verdict such as "Clear of shadows for 40 of 60 min, but
+  cloud cuts the sun to 28% of clear-sky strength, so the light is mostly
+  diffuse: only about 11 min of direct sun."
 - Sunrise, sunset and the sun's height through the day.
-- Optional map layers, remembered between visits: a warm **sunlight overlay** on
-  sunlit ground, and **3D terrain** with hillshade.
+- A **Map / Satellite** switch. Map is a quiet drawn basemap with no shop or
+  restaurant icons. Satellite puts a real aerial photo under the computed
+  shadows, with an opacity slider so the shadows stay readable.
+- A **sun path** drawn on the map: the sun's arc for the day from sunrise to
+  sunset with the hours marked, the selected window highlighted, and the sun
+  itself with an arrow showing where its light comes from and a label such as
+  "Sun from SW, 25° up, 48% strength". It turns with the map and moves with the
+  slider.
+- Optional map layers, remembered between visits: a **sun-hours map** that
+  colours the ground by how long it is in the sun during your time window, and
+  **3D terrain** with hillshade.
 - A sky that follows the time of day, and building light that comes from where
   the sun actually is.
+
+| Map | Satellite |
+| --- | --- |
+| ![Drawn basemap with blue shade and the sun path](docs/screenshots/map-omonia.jpg) | ![Satellite basemap with blue shade and the sun path](docs/screenshots/satellite-omonia.jpg) |
+
+Omonia, Athens, same view and time (14:00) in both basemaps.
+
+![Sun-hours map on the satellite basemap](docs/screenshots/sun-hours-omonia.jpg)
+
+The same view with **Sun hours** on, for an 11:00 to 17:00 window.
 
 ## How it works
 
@@ -38,6 +57,7 @@ service, so it costs nothing to host.
 | Map rendering | [MapLibre GL JS](https://maplibre.org/) |
 | Tiles and style | [OpenFreeMap](https://openfreemap.org/) "liberty" style, OpenMapTiles schema, data from OpenStreetMap |
 | Sun position | [suncalc](https://github.com/mourner/suncalc) |
+| Satellite imagery (optional) | [Esri World Imagery](https://www.arcgis.com/home/item.html?id=10df2279f9684e4a9f6a7f08febac2a9) |
 | Terrain (optional) | [AWS Terrain Tiles](https://registry.opendata.aws/terrain-tiles/), Mapzen terrarium elevation tiles |
 | Forecast | [Open-Meteo forecast API](https://open-meteo.com/en/docs) |
 | Place search | [Open-Meteo geocoding API](https://open-meteo.com/en/docs/geocoding-api) |
@@ -88,24 +108,38 @@ on flat ground.
    `levels * 3 m`, else a 12 m fallback (`FALLBACK_BUILDING_HEIGHT_M`).
 
 6. **Point in shade.** A point is shaded if it is inside any building's shadow
-   polygon, ignoring the building the point itself stands in. The click analysis
+   polygon, ignoring the building the point itself stands in. In code this is
+   tested without building the polygon: the point is shaded when a line from it
+   toward the sun, as long as the shadow, touches the footprint. A test checks
+   that both give the same answer. The click analysis
    samples the window every 5 minutes; each sample is direct sun, building shade,
    or sun below the horizon (counted as no sun).
 
 ### Drawing the shadows
 
 Merging every shadow in view with a polygon union takes a second or more per
-frame in a dense city, which is too slow for the slider. So the map layer draws
-the un-merged shadow pieces as a **zero-height `fill-extrusion` layer** instead
-of a plain `fill` layer: MapLibre paints each pixel of a translucent extrusion
-layer once, so overlapping shadows do not stack into darker patches. The result
-looks like a flat fill. Exact per-building polygons (with the union) are still
-used for the click analysis, where only nearby buildings matter.
+frame in a dense city, which is too slow for the slider. So the shade is
+**painted** instead (`src/lib/shadowCanvas.ts`): every shadow piece is filled
+in one solid colour on an off-screen canvas, which merges overlaps for free,
+and the map shows that canvas as a single picture laid on the ground.
 
-Shadows are drawn from zoom 15 up, for at most 2,000 buildings nearest the map
-centre. Which buildings those are is worked out once per map move, not per
-slider step. On a desktop GPU a slider step takes about 35 to 50 ms in a dense
-city view, with every layer switched on.
+- The shade is **blue with a dark outline**, a colour no aerial photo
+  contains, so it cannot be mistaken for a shadow in the picture.
+- Its strength is **constant** (46% on the map, 62% on satellite). Where shade
+  falls is geometry, so cloud never fades it; how strong the sun is shows in
+  the weather panel and the sun label.
+- **Only the ground is shaded.** Building outlines are cut back out of the
+  picture, otherwise every roof would be painted and a city block would read as
+  one blue slab.
+- A legend on the map says which time the shade is drawn for.
+
+Exact per-building polygons (with the union) are still used for the click
+analysis, where only nearby buildings matter.
+
+Shadows are drawn from zoom 15 up, for at most 1,500 buildings nearest the map
+centre. Which ones those are is worked out once per map move, not per slider
+step. Measured on a desktop GPU (RTX 2060, 929 x 909 window) in central
+Athens: about 33 to 37 ms per slider step.
 
 ### Cloud-aware sunlight (sunFactor)
 
@@ -132,7 +166,10 @@ If the forecast has no direct radiation, or the clear-sky value is under
 sunFactor = 1 - cloud_cover / 100
 ```
 
-sunFactor is used in four places:
+sunFactor is used in three places:
+
+- **Sun label.** The "48% strength" next to the sun on its path is the
+  sunFactor of the slider's hour.
 
 - **Weather label.** Sunny, Partly sunny or Overcast by sunFactor alone (see the
   thresholds above).
@@ -140,10 +177,6 @@ sunFactor is used in four places:
 - **Effective sun minutes.** Each 5-minute sample counts `5 * sunFactor` if it
   is clear of shadows and 0 otherwise. Forty unshaded minutes at sunFactor 0.3
   are 12 effective minutes.
-- **Shadow darkness.** Shadow opacity scales with sunFactor (never below a
-  quarter of full strength, so the geometry stays readable under cloud).
-- **Sunlight overlay.** Its opacity scales with sunFactor too.
-
 ### Which forecast row each number comes from
 
 Open-Meteo's hourly variables use two conventions, and `parseHourly` in
@@ -167,23 +200,94 @@ cloud cover.
 
 ### Map layers and look
 
-- **Sunlight overlay** (off by default). One warm, translucent polygon over the
-  whole map, placed just below the shadow layer. Shadows cover it, so only
-  sunlit ground looks tinted. No polygon union is involved.
-- **3D terrain** (off by default). Elevation tiles drive both the terrain mesh
-  and a hillshade layer lit from the sun's bearing. The tiles are requested only
-  once the layer is switched on. Shadows are still computed for flat ground and
-  are lifted 1.5 m so the terrain does not hide them.
-- **Sky and light.** The sky colours switch between day, golden hour and night,
-  and buildings are lit from the sun's real bearing and height.
-- The map renders at the screen's `devicePixelRatio`, and the camera can pitch
-  up to 85 degrees.
+**Basemap switch** (Map is the default; the choice is remembered).
 
-Both toggles are stored in `localStorage` (`sunspot:sunlight-overlay`,
-`sunspot:terrain`).
+- **Map.** The OpenFreeMap "liberty" style, restyled after it loads
+  (`src/lib/basemap.ts`) so that shadows and sunlight are the visual focus:
+  every point-of-interest layer (shops, restaurants, offices) is hidden, along
+  with one-way arrows, road shields and airport icons; bus stops are hidden,
+  rail and metro stations stay, small and pale; street names stay, small and
+  low-contrast; land, water, roads and rail are recoloured to light neutrals.
+- **Satellite.** Esri World Imagery as a raster layer above the drawn land and
+  roads and below the sun-hours map, the shadows, the buildings and the labels.
+  The 3D buildings turn into faint glass boxes so the real roofs show, and the
+  labels switch to white with a dark halo. A **Photo strength** slider (30% to
+  100%, default 85%) controls the photo. Up to 85% the photo is also muted
+  (greyer, flatter, lighter) so the shadows frozen into it recede behind the
+  computed blue shade; from there to 100% the muting eases off, and 100% shows
+  the untouched photo. The imagery tiles are only requested once Satellite is
+  switched on.
 
-The base style stays OpenFreeMap "liberty": it is already the most detailed of
-the OpenFreeMap styles (landuse, points of interest, transit, 3D buildings).
+**Toggles.**
+
+- **Sun path** (on by default). A sky dome seen from above, laid on the ground
+  in the middle of the free part of the map (`src/lib/sunPath.ts`). The ring is
+  the horizon and its centre is straight overhead: the sun is drawn in its
+  compass direction, on the ring at 0° and evenly closer to the centre as it
+  climbs (30° up is two thirds of the way out). The yellow line is the whole
+  day from sunrise to sunset, with a dot on every hour and a number on every
+  third; the thick orange stretch is the selected window. The sun moves along
+  it with the slider, and a dotted arrow runs from it to the centre, the way
+  the light travels. Every point is a real ground position projected to the
+  screen, so the drawing turns and tilts with the map. The label gives compass
+  direction, height above the horizon and sunFactor. When the sun is down the
+  path stays and the sun is left out.
+- **Sun hours** (off by default). Colours the ground by how long it is clear
+  of building shadows during the selected time window (`src/lib/sunHours.ts`).
+  The window is sampled every 5 minutes (at most 13 samples; longer windows are
+  sampled more coarsely). The shade for each sample is painted solid on a
+  scratch canvas and added to the picture at 1/N strength, so each pixel's
+  opacity ends up as the share of the window it was shaded. That share is then
+  turned into one of five bands: no sun (indigo), under a third of the window
+  (purple), a third to two thirds (coral), over two thirds (orange), and sun
+  the whole time, which is left **without colour** so open ground does not
+  turn the map into one flat tint. A legend gives the bands in minutes. While
+  it is on it replaces the blue shade, because the two cannot be read together,
+  and the slider only moves the sun on its path. It counts building shade
+  only: cloud is not included, and a sample with the sun below the horizon
+  counts as shade. It is repainted when the map or the window changes (about a
+  quarter of a second on the test machine), not on slider steps.
+- **3D terrain** (off by default). Elevation tiles drive both the terrain mesh,
+  at true scale, and a hillshade layer lit from the sun's bearing. The tiles are
+  requested only once the layer is switched on. Shadows are still computed for
+  flat ground; the shade picture is draped over the terrain. See the
+  accuracy note under Known limitations.
+
+Other details: the sky colours switch between day, golden hour and night,
+buildings are lit from the sun's real bearing and height, the map renders at
+the screen's `devicePixelRatio`, and the camera can pitch up to 85 degrees.
+
+Settings are stored in `localStorage`: `sunspot:basemap`,
+`sunspot:imagery-opacity`, `sunspot:sun-direction`, `sunspot:sun-hours`
+and `sunspot:terrain`.
+
+### Satellite imagery and the Esri key
+
+The Satellite basemap uses Esri World Imagery (`src/lib/imagery.ts`).
+
+- **Without a key** (the default) tiles come from
+  `server.arcgisonline.com`. This works out of the box and is meant for local
+  development and personal use.
+- **With a key**, set `VITE_ESRI_KEY` and every tile request goes to
+  `ibasemaps-api.arcgis.com` with `?token=<key>` appended. Esri's terms expect
+  public sites to use an ArcGIS account, so do this before publishing a site
+  that offers the Satellite basemap.
+
+To set the key locally, copy `.env.example` to `.env.local` and fill it in:
+
+```
+VITE_ESRI_KEY=your-key-here
+```
+
+For the GitHub Pages build, add a repository secret named `VITE_ESRI_KEY`
+(**Settings > Secrets and variables > Actions**); the deploy workflow passes it
+to the build, and builds without the secret simply stay keyless.
+
+Getting a key: create a free account at
+[developers.arcgis.com](https://developers.arcgis.com/), create an API key with
+the basemap (location services) privilege, and **restrict it to your site's
+address as an allowed referrer**. The key is compiled into the public site, so
+anyone can read it; the referrer restriction is what stops others from using it.
 
 ### Weather label thresholds
 
@@ -268,7 +372,19 @@ a paid GitHub plan.
   number of levels, so shadow lengths are approximate.
 - **Only buildings cast shadows.** Trees, terrain (hills) and roof shapes are
   not modelled. Every building is a flat-roofed box on flat ground, and
-  courtyards are treated as filled.
+  courtyards are treated as filled. On the Satellite basemap you can see the
+  trees, but they do not shade anything in the calculation.
+- **A satellite photo has its own shadows.** The photo was taken at one moment
+  on one day, and the real shadows from that moment are part of the picture.
+  The computed shadows for your chosen time are drawn on top, so in places you
+  will see both. Lower the photo opacity to tell them apart. The photo can also
+  be several years old.
+- **Terrain is coarse.** The free elevation data is a grid of about 30 m.
+  Checked against known heights in Athens: Lycabettus summit reads 244 to 258 m
+  (real 277 m), the Acropolis 137 to 146 m (real 156 m), Philopappou 97 to
+  112 m (real 147 m), and flat Omonia about 85 m (real about 75 m). Summits are
+  shaved by 20 to 50 m and flat ground sits about 10 m high. It is drawn at
+  true scale and is a visual aid only.
 - **Roofs and upper floors.** Shade is computed at ground level. A marker placed
   on a building ignores that building.
 - **sunFactor is an estimate.** The clear-sky model assumes clean air, and the
@@ -289,13 +405,17 @@ a paid GitHub plan.
   several days ahead is a rough guide. Shadows work for any date; weather does
   not.
 - **Zoom.** Shadows and the click analysis need building outlines, which load
-  from zoom 15. Very busy views shade only the nearest 2,000 buildings.
+  from zoom 15. Very busy views shade only the nearest 1,500 buildings.
 
 ## Attribution
 
 Map data © [OpenStreetMap](https://www.openstreetmap.org/copyright)
-contributors. Tiles and style by [OpenFreeMap](https://openfreemap.org/)
+contributors, available under the
+[Open Database License (ODbL)](https://opendatacommons.org/licenses/odbl/).
+Tiles and style by [OpenFreeMap](https://openfreemap.org/)
 (© OpenMapTiles). Weather and geocoding by [Open-Meteo](https://open-meteo.com/).
 Terrain from [AWS Terrain Tiles](https://registry.opendata.aws/terrain-tiles/)
 (Mapzen), built from the sources listed in the
 [Tilezen Joerd attribution](https://github.com/tilezen/joerd/blob/master/docs/attribution.md).
+Satellite imagery: Powered by [Esri](https://www.esri.com). Sources: Esri,
+Maxar, Earthstar Geographics, and the GIS User Community.

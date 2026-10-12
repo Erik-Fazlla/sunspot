@@ -11,7 +11,7 @@ import {
   type HourWeather,
 } from './weatherLabel'
 
-/** sun = direct sun, shade = a building blocks it, night = the sun is below the horizon. */
+/** sun = nothing in the way, shade = a building blocks it, night = the sun is below the horizon. */
 export type SampleState = 'sun' | 'shade' | 'night'
 
 export interface Sample {
@@ -123,12 +123,12 @@ export function combinedMessage(
   }
   const nightNote = night > 0 ? ` The sun is below the horizon for ${night} min of the window.` : ''
   if (clear === 0) {
-    return `Building shadows cover this spot for the whole window, so it gets no direct sun whatever the sky does.${nightNote}`
+    return `Shadows cover this spot for the whole window, so it gets no direct sun whatever the sky does.${nightNote}`
   }
   const lead =
     clear === total
-      ? `Clear of building shadows for all ${total} min`
-      : `Clear of building shadows for ${clear} of ${total} min`
+      ? `Clear of shadows for all ${total} min`
+      : `Clear of shadows for ${clear} of ${total} min`
   if (!hours?.length || effectiveMinutes === null) {
     return `${lead}. The forecast is unavailable, so how much of that is real sunshine is unknown.${nightNote}`
   }

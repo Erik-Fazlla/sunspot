@@ -1,16 +1,16 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AttributionControl,
   Map as MapLibreMap,
   Marker,
   NavigationControl,
   setWorkerUrl,
-  type GeoJSONSource,
+  type CanvasSource,
   type SkySpecification,
 } from 'maplibre-gl'
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
 import 'maplibre-gl/dist/maplibre-gl.css'
-import type { Feature, FeatureCollection } from 'geojson'
+import { applyCleanBasemap } from '../lib/basemap'
 import {
   BUILDING_3D_LAYER,
   BUILDING_SOURCE,
@@ -24,17 +24,40 @@ import {
   MIN_SHADOW_ZOOM,
   MOVE_DEBOUNCE_MS,
   TERRAIN_ATTRIBUTION,
+  TERRAIN_EXAGGERATION,
   TERRAIN_MAX_ZOOM,
   TERRAIN_TILES_URL,
 } from '../lib/constants'
+import { ESRI_ATTRIBUTION, esriImageryTileUrl, IMAGERY_MAX_ZOOM, imageryTone } from '../lib/imagery'
+import { SHADE_OPACITY, SUN_HOURS_OPACITY } from '../lib/overlay'
 import {
   buildingsFromFeatures,
   metersToDegrees,
   shadowOffset,
-  shadowRenderGeometry,
+  shadowRibbons,
   type Building,
+  type Ring,
 } from '../lib/shadow'
+import {
+  extentCorners,
+  paintShadows,
+  SHADE_FILL,
+  SHADOW_CANVAS_PX,
+  shadowExtent,
+  type ShadowExtent,
+} from '../lib/shadowCanvas'
 import { getSunPosition, type SunPosition } from '../lib/sun'
+import {
+  paintSunHours,
+  SUN_HOURS_CANVAS_PX,
+  sunHoursLegend,
+  sunHoursSampleMinutes,
+  sunHoursWindowLabel,
+} from '../lib/sunHours'
+import { sunDirectionLabel } from '../lib/sunIndicator'
+import { sunPathDay } from '../lib/sunPath'
+import { zonedToUtc } from '../lib/time'
+import { SunPathOverlay } from './SunPathOverlay'
 
 // Vite pre-bundles maplibre-gl, so its "worker next to the module" lookup
 // would miss. Point it at a worker bundle Vite builds for us.
@@ -42,34 +65,31 @@ setWorkerUrl(workerUrl)
 
 const SHADOW_SOURCE = 'sunspot-shadows'
 const SHADOW_LAYER = 'sunspot-shadows'
-const SUNLIGHT_SOURCE = 'sunspot-sunlight'
-const SUNLIGHT_LAYER = 'sunspot-sunlight'
-/** Overlay strength under a clear sky. */
-const SUNLIGHT_OPACITY = 0.3
-// One polygon over the whole map. The shadow layer above it darkens the shaded
-// parts, so the warm tint only reads as sunlit ground and no union is needed.
-const WORLD: FeatureCollection = {
-  type: 'FeatureCollection',
-  features: [
-    {
-      type: 'Feature',
-      properties: {},
-      geometry: {
-        type: 'Polygon',
-        coordinates: [[[-180, -85], [180, -85], [180, 85], [-180, 85], [-180, -85]]],
-      },
-    },
-  ],
-}
-const EMPTY: FeatureCollection = { type: 'FeatureCollection', features: [] }
-/** Shadow darkness under a clear sky. */
-const SHADOW_OPACITY = 0.42
-/** Under full cloud a faint shadow stays, so the geometry remains readable. */
-const MIN_SHADOW_SHARE = 0.25
+// The sun-hours map: a second painted picture, under the shade (see lib/sunHours.ts).
+const SUN_HOURS_SOURCE = 'sunspot-sun-hours'
+const SUN_HOURS_LAYER = 'sunspot-sun-hours'
 
-function shadowOpacity(sunFactor: number): number {
-  return SHADOW_OPACITY * (MIN_SHADOW_SHARE + (1 - MIN_SHADOW_SHARE) * sunFactor)
+/**
+ * Hand a canvas source's new pixels to the map. A canvas source only re-reads
+ * its canvas while "playing"; one frame is enough. `pause()` would upload the
+ * picture a second time, so the flag is cleared directly once that frame has
+ * drawn (falling back to pause() if MapLibre renames it).
+ */
+function pushCanvas(map: MapLibreMap, source: CanvasSource) {
+  source.play()
+  map.once('render', () => {
+    const internals = source as unknown as { _playing?: boolean }
+    if (typeof internals._playing === 'boolean') internals._playing = false
+    else source.pause()
+  })
 }
+
+const IMAGERY_SOURCE = 'sunspot-imagery'
+const IMAGERY_LAYER = 'sunspot-imagery'
+/** Near-opaque walls keep the shadow under a footprint from tinting the building itself. */
+const BUILDING_OPACITY_ON_MAP = 0.94
+/** Over a photo the 3D buildings turn into faint glass boxes, so the real roofs show through. */
+const BUILDING_OPACITY_ON_IMAGERY = 0.28
 
 // Elevation is loaded twice on purpose: MapLibre advises separate sources for
 // the 3D terrain mesh and the hillshade layer.
@@ -78,7 +98,6 @@ const HILLSHADE_SOURCE = 'sunspot-hillshade-dem'
 const HILLSHADE_LAYER = 'sunspot-hillshade'
 /** Hillshade goes under water and roads; this is the first such layer in the style. */
 const HILLSHADE_BEFORE = 'waterway_tunnel'
-const SHADOW_LIFT_ON_TERRAIN_M = 1.5
 
 /** Keeps roofs readable at sunrise and sunset, when a true sun angle would leave them dark. */
 const MAX_LIGHT_POLAR_DEG = 55
@@ -107,6 +126,8 @@ export interface LngLat {
   lon: number
 }
 
+export type Basemap = 'map' | 'satellite'
+
 type Hint = 'zoom' | 'night' | null
 
 const HINT_TEXT: Record<Exclude<Hint, null>, string> = {
@@ -118,12 +139,26 @@ interface Props {
   center: LngLat
   /** The instant whose shadows are drawn. */
   sunTime: Date
-  /** 0 to 1: how much direct sun the weather lets through. Fades the shadows under cloud. */
-  sunFactor: number
-  /** Tint sunlit ground with a warm overlay. */
-  showSunlight: boolean
+  /** The selected date (YYYY-MM-DD) and timezone; the sun's path is drawn for this day. */
+  date: string
+  timezone: string
+  /** The selected time window, in minutes after midnight; marked on the sun's path. */
+  windowStartMin: number
+  windowEndMin: number
+  /** 0 to 1: how much direct sun the weather lets through; null without a forecast. */
+  sunStrength: number | null
+  /** The drawn map, or a satellite photo under the shadows. */
+  basemap: Basemap
+  /** Opacity of the satellite photo, 0 to 1. */
+  imageryOpacity: number
+  /** Show the sun's path for the day and where the light comes from now. */
+  showSunDirection: boolean
+  /** Colour the ground by how long it is in the sun during the selected window. */
+  showSunHours: boolean
   /** 3D terrain and hillshade from free elevation tiles. */
   showTerrain: boolean
+  /** Clock time the shade is drawn for, e.g. "16:00"; shown in the map legend. */
+  shadeTimeLabel: string
   point: LngLat | null
   onPointSelect: (point: LngLat) => void
   /** Called with every building in the loaded tiles whenever that set changes. */
@@ -133,9 +168,17 @@ interface Props {
 export function MapView({
   center,
   sunTime,
-  sunFactor,
-  showSunlight,
+  date,
+  timezone,
+  windowStartMin,
+  windowEndMin,
+  sunStrength,
+  basemap,
+  imageryOpacity,
+  showSunDirection,
+  showSunHours,
   showTerrain,
+  shadeTimeLabel,
   point,
   onPointSelect,
   onBuildingsChange,
@@ -145,12 +188,20 @@ export function MapView({
   const markerRef = useRef<Marker | null>(null)
   const buildingsRef = useRef<Building[]>([])
   const visibleRef = useRef<Building[]>([])
+  // Off-screen picture of the shade, and the patch of ground it covers.
+  const shadeCanvasRef = useRef<HTMLCanvasElement | null>(null)
+  const extentRef = useRef<ShadowExtent | null>(null)
+  // The sun-hours picture, and a scratch canvas each sample time is painted into first.
+  const hoursCanvasRef = useRef<HTMLCanvasElement | null>(null)
+  const hoursScratchRef = useRef<HTMLCanvasElement | null>(null)
+  const paintHoursRef = useRef<() => void>(() => {})
   const signatureRef = useRef('')
   const drawRef = useRef<() => void>(() => {})
   const callbacksRef = useRef({ onPointSelect, onBuildingsChange })
   const [hint, setHint] = useState<Hint>(null)
   const [ready, setReady] = useState(false)
-  const appearanceRef = useRef({ sunFactor })
+  // The loaded map, for the overlay that draws on top of it.
+  const [loadedMap, setLoadedMap] = useState<MapLibreMap | null>(null)
   const skyPhaseRef = useRef<SkyPhase | null>(null)
 
   useEffect(() => {
@@ -161,8 +212,22 @@ export function MapView({
   useEffect(() => {
     drawRef.current = () => {
       const map = mapRef.current
-      const source = map?.getSource<GeoJSONSource>(SHADOW_SOURCE)
-      if (!map || !source) return
+      const source = map?.getSource<CanvasSource>(SHADOW_SOURCE)
+      const context = shadeCanvasRef.current?.getContext('2d')
+      if (!map || !source || !context) return
+      // Paint the shade picture and hand the new pixels to the map.
+      const show = (rings: Ring[]) => {
+        const extent = extentRef.current
+        paintShadows(
+          context,
+          SHADOW_CANVAS_PX,
+          SHADOW_CANVAS_PX,
+          extent ?? { west: 0, south: 0, east: 1, north: 1 },
+          extent ? rings : [],
+          visibleRef.current.map((building) => building.ring),
+        )
+        pushCanvas(map, source)
+      }
       const mapCenter = map.getCenter()
       // The sun's direction is effectively the same across one viewport.
       const sun = getSunPosition(sunTime, mapCenter.lat, mapCenter.lng)
@@ -175,33 +240,81 @@ export function MapView({
         position: [1.5, up ? sun.bearingDeg : 210, up ? Math.min(MAX_LIGHT_POLAR_DEG, 90 - sun.altitudeDeg) : 40],
         intensity: up ? 0.55 : 0.15,
         // Low sun is warm; high sun is white.
-        color: phase === 'golden' ? '#ffe0b0' : '#ffffff',
+        color: phase === 'golden' ? '#fff0da' : '#ffffff',
       })
       if (phase !== skyPhaseRef.current) {
         skyPhaseRef.current = phase
         map.setSky({ ...SKY_BLEND, ...SKY[phase] })
       }
       if (map.getLayer(HILLSHADE_LAYER)) {
-        map.setPaintProperty(HILLSHADE_LAYER, 'hillshade-illumination-direction', up ? Math.round(sun.bearingDeg) : 315)
+        // Hillshade is drawn into the terrain texture, which is costly to repaint,
+        // so its light only moves in 10-degree steps rather than on every slider step.
+        const direction = up ? Math.round(sun.bearingDeg / 10) * 10 : 315
+        if (map.getPaintProperty(HILLSHADE_LAYER, 'hillshade-illumination-direction') !== direction) {
+          map.setPaintProperty(HILLSHADE_LAYER, 'hillshade-illumination-direction', direction)
+        }
       }
 
       if (map.getZoom() < MIN_SHADOW_ZOOM || sun.altitudeRad <= 0) {
-        source.setData(EMPTY)
+        show([])
         setHint(sun.altitudeRad <= 0 ? 'night' : 'zoom')
         return
       }
 
-      const features: Feature[] = []
+      const rings: Ring[] = []
       for (const building of visibleRef.current) {
         const offset = shadowOffset(building.height, sun, mapCenter.lat)
         if (!offset) continue
-        features.push({ type: 'Feature', properties: {}, geometry: shadowRenderGeometry(building, offset) })
+        // Only the shade beyond the footprint is painted; footprints are cut out anyway.
+        for (const ribbon of shadowRibbons(building.ring, offset)) rings.push(ribbon)
       }
-      source.setData({ type: 'FeatureCollection', features })
+      show(rings)
       setHint(null)
     }
     drawRef.current()
   }, [sunTime])
+
+  // Repaints the sun-hours map for the current view and time window. It costs
+  // one shade painting per sample time, so it only runs while switched on, and
+  // only when the view or the window changes, never on a slider step.
+  useEffect(() => {
+    paintHoursRef.current = () => {
+      const map = mapRef.current
+      const source = map?.getSource<CanvasSource>(SUN_HOURS_SOURCE)
+      // The picture is read back to colour it, which these canvases are set up for.
+      const output = hoursCanvasRef.current?.getContext('2d', { willReadFrequently: true })
+      const scratch = hoursScratchRef.current?.getContext('2d', { willReadFrequently: true })
+      if (!map || !source || !output || !scratch || !showSunHours) return
+      const extent = extentRef.current
+      const mapCenter = map.getCenter()
+      const visible = visibleRef.current
+      const samples =
+        extent && map.getZoom() >= MIN_SHADOW_ZOOM
+          ? sunHoursSampleMinutes(windowStartMin, windowEndMin).map((minutes) => {
+              const sun = getSunPosition(zonedToUtc(date, minutes, timezone), mapCenter.lat, mapCenter.lng)
+              // Sun down: the whole ground counts as shaded for this sample.
+              if (sun.altitudeRad <= 0) return null
+              const rings: Ring[] = []
+              for (const building of visible) {
+                const offset = shadowOffset(building.height, sun, mapCenter.lat)
+                if (!offset) continue
+                for (const ribbon of shadowRibbons(building.ring, offset)) rings.push(ribbon)
+              }
+              return rings
+            })
+          : []
+      paintSunHours(
+        scratch,
+        output,
+        SUN_HOURS_CANVAS_PX,
+        extent ?? { west: 0, south: 0, east: 1, north: 1 },
+        samples,
+        visible.map((building) => building.ring),
+      )
+      pushCanvas(map, source)
+    }
+    paintHoursRef.current()
+  }, [showSunHours, date, timezone, windowStartMin, windowEndMin])
 
   useEffect(() => {
     const compact = window.matchMedia('(max-width: 720px)').matches
@@ -229,6 +342,21 @@ export function MapView({
       ratioQuery.addEventListener('change', onRatioChange)
     }
     watchRatio()
+
+    // Keep the canvas the size of its container, whatever resizes it.
+    let resizeTimer: ReturnType<typeof setTimeout> | undefined
+    const resizeMap = () => {
+      map.resize()
+      // Mobile browsers settle their toolbars a moment after the event.
+      clearTimeout(resizeTimer)
+      resizeTimer = setTimeout(() => map.resize(), 200)
+    }
+    const resizeObserver = new ResizeObserver(resizeMap)
+    resizeObserver.observe(containerRef.current!)
+    window.addEventListener('resize', resizeMap)
+    window.addEventListener('orientationchange', resizeMap)
+    window.visualViewport?.addEventListener('resize', resizeMap)
+
     map.addControl(new NavigationControl({ visualizePitch: true }), 'top-right')
     map.addControl(
       new AttributionControl({
@@ -272,6 +400,17 @@ export function MapView({
         visible = visible.sort((a, b) => distance(a) - distance(b)).slice(0, MAX_SHADOW_BUILDINGS)
       }
       visibleRef.current = visible
+      // The shade picture covers only where these buildings can throw shade, which keeps it sharp.
+      const extent = shadowExtent(
+        [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()],
+        visible.map((building) => building.bbox),
+        margin,
+      )
+      extentRef.current = extent
+      if (extent) {
+        map.getSource<CanvasSource>(SHADOW_SOURCE)?.setCoordinates(extentCorners(extent) as never)
+        map.getSource<CanvasSource>(SUN_HOURS_SOURCE)?.setCoordinates(extentCorners(extent) as never)
+      }
       // Tile loads fire often; only tell React when the set really changed.
       const first = buildings[0]?.bbox[0] ?? 0
       const last = buildings[buildings.length - 1]?.bbox[0] ?? 0
@@ -281,6 +420,7 @@ export function MapView({
         callbacksRef.current.onBuildingsChange(buildings)
       }
       drawRef.current()
+      paintHoursRef.current()
     }
     const scheduleRefresh = () => {
       clearTimeout(timer)
@@ -288,42 +428,56 @@ export function MapView({
     }
 
     map.on('load', () => {
-      map.addSource(SHADOW_SOURCE, { type: 'geojson', data: EMPTY })
+      applyCleanBasemap(map as unknown as Parameters<typeof applyCleanBasemap>[0])
+      // The shade is one picture painted off-screen (see lib/shadowCanvas.ts) and
+      // laid on the ground. Painting merges overlapping shadows without a
+      // polygon union, gives the shade a clean outline, and drapes over terrain.
+      const shadeCanvas = document.createElement('canvas')
+      shadeCanvas.width = SHADOW_CANVAS_PX
+      shadeCanvas.height = SHADOW_CANVAS_PX
+      shadeCanvasRef.current = shadeCanvas
+      const here = map.getCenter()
+      // Placeholder patch; the real extent is set as soon as buildings are known.
+      const placeholder: [[number, number], [number, number], [number, number], [number, number]] = [
+        [here.lng - 0.001, here.lat + 0.001],
+        [here.lng + 0.001, here.lat + 0.001],
+        [here.lng + 0.001, here.lat - 0.001],
+        [here.lng - 0.001, here.lat - 0.001],
+      ]
+      map.addSource(SHADOW_SOURCE, { type: 'canvas', canvas: shadeCanvas, animate: false, coordinates: placeholder })
       map.addLayer(
         {
           id: SHADOW_LAYER,
-          // A zero-height extrusion rather than a plain fill: translucent
-          // extrusions paint each pixel once, so overlapping shadows do not
-          // stack into darker patches and no polygon union is needed per frame.
-          type: 'fill-extrusion',
+          type: 'raster',
           source: SHADOW_SOURCE,
-          paint: {
-            'fill-extrusion-color': '#141b38',
-            'fill-extrusion-opacity': shadowOpacity(appearanceRef.current.sunFactor),
-            'fill-extrusion-height': 0,
-            'fill-extrusion-base': 0,
-            'fill-extrusion-vertical-gradient': false,
-          },
+          paint: { 'raster-opacity': SHADE_OPACITY.map, 'raster-fade-duration': 0 },
         },
         map.getLayer(BUILDING_3D_LAYER) ? BUILDING_3D_LAYER : undefined,
       )
-      map.addSource(SUNLIGHT_SOURCE, { type: 'geojson', data: WORLD })
+      const hoursCanvas = document.createElement('canvas')
+      const hoursScratch = document.createElement('canvas')
+      for (const canvas of [hoursCanvas, hoursScratch]) {
+        canvas.width = SUN_HOURS_CANVAS_PX
+        canvas.height = SUN_HOURS_CANVAS_PX
+      }
+      hoursCanvasRef.current = hoursCanvas
+      hoursScratchRef.current = hoursScratch
+      map.addSource(SUN_HOURS_SOURCE, { type: 'canvas', canvas: hoursCanvas, animate: false, coordinates: placeholder })
       map.addLayer(
         {
-          id: SUNLIGHT_LAYER,
-          type: 'fill',
-          source: SUNLIGHT_SOURCE,
-          paint: { 'fill-color': '#ffdf6b', 'fill-opacity': 0 },
+          id: SUN_HOURS_LAYER,
+          type: 'raster',
+          source: SUN_HOURS_SOURCE,
+          paint: { 'raster-opacity': 0, 'raster-fade-duration': 0 },
         },
-        // Below the shadows, so shaded ground is covered by them.
         SHADOW_LAYER,
       )
       if (map.getLayer(BUILDING_3D_LAYER)) {
-        // Near-opaque walls keep the shadow under a footprint from tinting the building itself.
-        map.setPaintProperty(BUILDING_3D_LAYER, 'fill-extrusion-opacity', 0.94)
+        map.setPaintProperty(BUILDING_3D_LAYER, 'fill-extrusion-opacity', BUILDING_OPACITY_ON_MAP)
         map.setPaintProperty(BUILDING_3D_LAYER, 'fill-extrusion-color', '#efeae0')
       }
       setReady(true)
+      setLoadedMap(map)
       refresh()
     })
     map.on('moveend', scheduleRefresh)
@@ -336,7 +490,13 @@ export function MapView({
 
     return () => {
       clearTimeout(timer)
+      clearTimeout(resizeTimer)
+      resizeObserver.disconnect()
+      window.removeEventListener('resize', resizeMap)
+      window.removeEventListener('orientationchange', resizeMap)
+      window.visualViewport?.removeEventListener('resize', resizeMap)
       ratioQuery?.removeEventListener('change', onRatioChange)
+      setLoadedMap(null)
       map.remove()
       mapRef.current = null
     }
@@ -344,22 +504,57 @@ export function MapView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Clouds weaken the direct beam, so shadows fade with the sunFactor.
+  // Shade keeps one clear strength per basemap; cloud never fades it. The
+  // sun-hours map takes its place while it is on: both at once cannot be read.
   useEffect(() => {
-    appearanceRef.current = { sunFactor }
     const map = mapRef.current
     if (!ready || !map?.getLayer(SHADOW_LAYER)) return
-    map.setPaintProperty(SHADOW_LAYER, 'fill-extrusion-opacity', shadowOpacity(sunFactor))
-  }, [ready, sunFactor])
+    map.setPaintProperty(SHADOW_LAYER, 'raster-opacity', showSunHours ? 0 : SHADE_OPACITY[basemap])
+    map.setPaintProperty(SUN_HOURS_LAYER, 'raster-opacity', showSunHours ? SUN_HOURS_OPACITY[basemap] : 0)
+  }, [ready, basemap, showSunHours])
 
-  // The sunlight tint follows the same rule, and only shows where shadows are
-  // drawn too: without them the whole map would wrongly look sunlit.
+  // Satellite photo under the shadows. Its tiles are only requested once it is switched on.
   useEffect(() => {
     const map = mapRef.current
-    if (!ready || !map?.getLayer(SUNLIGHT_LAYER)) return
-    const visible = showSunlight && hint === null
-    map.setPaintProperty(SUNLIGHT_LAYER, 'fill-opacity', visible ? SUNLIGHT_OPACITY * sunFactor : 0)
-  }, [ready, showSunlight, sunFactor, hint])
+    if (!ready || !map) return
+    const satellite = basemap === 'satellite'
+    if (satellite && !map.getSource(IMAGERY_SOURCE)) {
+      map.addSource(IMAGERY_SOURCE, {
+        type: 'raster',
+        tiles: [esriImageryTileUrl(import.meta.env.VITE_ESRI_KEY as string | undefined)],
+        tileSize: 256,
+        maxzoom: IMAGERY_MAX_ZOOM,
+        attribution: ESRI_ATTRIBUTION,
+      })
+      // Above the drawn land and roads, below the sun-hours map, shadows, buildings and labels.
+      map.addLayer(
+        { id: IMAGERY_LAYER, type: 'raster', source: IMAGERY_SOURCE, paint: { 'raster-opacity': imageryOpacity } },
+        SUN_HOURS_LAYER,
+      )
+    }
+    if (!map.getLayer(IMAGERY_LAYER)) return
+    map.setLayoutProperty(IMAGERY_LAYER, 'visibility', satellite ? 'visible' : 'none')
+    map.setPaintProperty(IMAGERY_LAYER, 'raster-opacity', imageryOpacity)
+    // Mute the photo so its own, frozen shadows recede behind the computed shade.
+    const tone = imageryTone(imageryOpacity)
+    map.setPaintProperty(IMAGERY_LAYER, 'raster-saturation', tone.saturation)
+    map.setPaintProperty(IMAGERY_LAYER, 'raster-contrast', tone.contrast)
+    map.setPaintProperty(IMAGERY_LAYER, 'raster-brightness-min', tone.brightnessMin)
+    if (map.getLayer(BUILDING_3D_LAYER)) {
+      map.setPaintProperty(
+        BUILDING_3D_LAYER,
+        'fill-extrusion-opacity',
+        satellite ? BUILDING_OPACITY_ON_IMAGERY : BUILDING_OPACITY_ON_MAP,
+      )
+    }
+  }, [ready, basemap, imageryOpacity])
+
+  // Labels are pale-on-light for the drawn map and white-on-dark over a photo.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!ready || !map) return
+    applyCleanBasemap(map as unknown as Parameters<typeof applyCleanBasemap>[0], basemap === 'satellite')
+  }, [ready, basemap])
 
   // Terrain is optional: its tiles are only requested once it is switched on.
   useEffect(() => {
@@ -383,7 +578,7 @@ export function MapView({
             type: 'hillshade',
             source: HILLSHADE_SOURCE,
             paint: {
-              'hillshade-exaggeration': 0.4,
+              'hillshade-exaggeration': 0.5,
               'hillshade-shadow-color': '#39456b',
               'hillshade-highlight-color': '#fff6dc',
               'hillshade-illumination-anchor': 'map',
@@ -393,13 +588,10 @@ export function MapView({
         )
       }
       map.setLayoutProperty(HILLSHADE_LAYER, 'visibility', 'visible')
-      map.setTerrain({ source: TERRAIN_SOURCE, exaggeration: 1 })
-      // Lifted a little so the terrain surface does not hide the flat shadows.
-      map.setPaintProperty(SHADOW_LAYER, 'fill-extrusion-height', SHADOW_LIFT_ON_TERRAIN_M)
+      map.setTerrain({ source: TERRAIN_SOURCE, exaggeration: TERRAIN_EXAGGERATION })
       drawRef.current()
     } else if (map.getSource(TERRAIN_SOURCE)) {
       map.setTerrain(null)
-      map.setPaintProperty(SHADOW_LAYER, 'fill-extrusion-height', 0)
       map.setLayoutProperty(HILLSHADE_LAYER, 'visibility', 'none')
     }
   }, [ready, showTerrain])
@@ -425,10 +617,49 @@ export function MapView({
     }
   }, [point])
 
+  // The sun's path and its label. The sun is in practically the same place for
+  // the whole view, so the selected location stands in for the map centre here.
+  const pathDay = useMemo(
+    () => sunPathDay(date, timezone, center.lat, center.lon),
+    [date, timezone, center.lat, center.lon],
+  )
+  const pathSun = getSunPosition(sunTime, center.lat, center.lon)
+
   return (
     <>
       <div ref={containerRef} className="map" aria-label="3D map" />
       <div className={`map-dim${hint === 'night' ? ' is-night' : ''}`} />
+      {loadedMap && showSunDirection && (
+        <SunPathOverlay
+          map={loadedMap}
+          day={pathDay}
+          windowStartMin={windowStartMin}
+          windowEndMin={windowEndMin}
+          sun={pathSun}
+          label={sunDirectionLabel(pathSun, sunStrength)}
+        />
+      )}
+      {ready && showSunHours && hint !== 'zoom' && (
+        <div className="map-legend map-legend--hours">
+          <strong>Sun during {sunHoursWindowLabel(windowStartMin, windowEndMin)}</strong>
+          {sunHoursLegend(windowStartMin, windowEndMin).map((item) => (
+            <span key={item.id} className="map-legend__band">
+              <i style={{ background: item.color ?? 'transparent' }} aria-hidden="true" />
+              {item.label}
+            </span>
+          ))}
+          <span className="map-legend__note">Building shade only; cloud is not counted.</span>
+        </div>
+      )}
+      {ready && !showSunHours && hint === null && (
+        <div className="map-legend">
+          <i style={{ background: SHADE_FILL }} aria-hidden="true" />
+          <span>
+            <strong>Shade at {shadeTimeLabel}</strong>
+            {basemap === 'satellite' && ' · darker patches in the photo are old shadows'}
+          </span>
+        </div>
+      )}
       {hint && (
         <div className="map-hint" role="status">
           {HINT_TEXT[hint]}
