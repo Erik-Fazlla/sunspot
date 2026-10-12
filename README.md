@@ -26,20 +26,22 @@ service, so it costs nothing to host.
   cloud cuts the sun to 28% of clear-sky strength, so the light is mostly
   diffuse: only about 11 min of direct sun."
 - Sunrise, sunset and the sun's height through the day.
-- **Street details** from OpenStreetMap: trees that cast shadows, street lamps,
-  and benches coloured by whether they are in sun or shade at the chosen time.
+- A **Map / Satellite** switch. Map is a quiet drawn basemap with no shop or
+  restaurant icons. Satellite puts a real aerial photo under the computed
+  shadows, with an opacity slider so the shadows stay readable.
+- A **sun direction indicator**: a sun icon on the side of the map the light
+  comes from, with beams pointing across it and a label such as "Sun from SW,
+  25° up, 48% strength". It turns with the map and moves with the slider.
 - Optional map layers, remembered between visits: a warm **sunlight overlay** on
   sunlit ground, and **3D terrain** with hillshade.
-- A quiet basemap with no shop or restaurant icons, a sky that follows the time
-  of day, and building light that comes from where the sun actually is.
+- A sky that follows the time of day, and building light that comes from where
+  the sun actually is.
 
-| Before | After |
+| Map | Satellite |
 | --- | --- |
-| ![Omonia, 16:30, before](docs/screenshots/before-omonia-1630.jpg) | ![Omonia, 16:30, after](docs/screenshots/after-omonia-1630.jpg) |
-| ![Lycabettus with terrain, before](docs/screenshots/before-terrain-lycabettus.jpg) | ![Lycabettus with terrain, after](docs/screenshots/after-terrain-lycabettus.jpg) |
+| ![Drawn basemap with sun direction indicator](docs/screenshots/map-omonia.jpg) | ![Satellite basemap with computed shadows](docs/screenshots/satellite-omonia.jpg) |
 
-Same two views before and after the map polish: Omonia at 16:30 with the
-sunlight overlay on, and Lycabettus hill at 14:00 with 3D terrain on.
+Omonia, Athens, same view and time in both basemaps.
 
 ## How it works
 
@@ -48,6 +50,7 @@ sunlight overlay on, and Lycabettus hill at 14:00 with 3D terrain on.
 | Map rendering | [MapLibre GL JS](https://maplibre.org/) |
 | Tiles and style | [OpenFreeMap](https://openfreemap.org/) "liberty" style, OpenMapTiles schema, data from OpenStreetMap |
 | Sun position | [suncalc](https://github.com/mourner/suncalc) |
+| Satellite imagery (optional) | [Esri World Imagery](https://www.arcgis.com/home/item.html?id=10df2279f9684e4a9f6a7f08febac2a9) |
 | Terrain (optional) | [AWS Terrain Tiles](https://registry.opendata.aws/terrain-tiles/), Mapzen terrarium elevation tiles |
 | Forecast | [Open-Meteo forecast API](https://open-meteo.com/en/docs) |
 | Place search | [Open-Meteo geocoding API](https://open-meteo.com/en/docs/geocoding-api) |
@@ -115,12 +118,10 @@ layer once, so overlapping shadows do not stack into darker patches. The result
 looks like a flat fill. Exact per-building polygons (with the union) are still
 used for the click analysis, where only nearby buildings matter.
 
-Shadows are drawn from zoom 15 up, for at most 1,500 buildings and 1,500 trees
-nearest the map centre. Which ones those are is worked out once per map move,
-not per slider step. Measured on a desktop GPU (RTX 2060, 1686 x 960 window)
-in central Athens with 185 trees and 118 benches loaded: about 41 ms per slider
-step with street details and the overlay on, and 47 to 50 ms with 3D terrain on
-as well.
+Shadows are drawn from zoom 15 up, for at most 1,500 buildings nearest the map
+centre. Which ones those are is worked out once per map move, not per slider
+step. Measured on a desktop GPU (RTX 2060, 1686 x 960 window) in central
+Athens: about 28 ms per slider step on the drawn map and 34 ms on satellite.
 
 ### Cloud-aware sunlight (sunFactor)
 
@@ -147,7 +148,10 @@ If the forecast has no direct radiation, or the clear-sky value is under
 sunFactor = 1 - cloud_cover / 100
 ```
 
-sunFactor is used in four places:
+sunFactor is used in five places:
+
+- **Sun direction label.** The "48% strength" in the indicator is the sunFactor
+  of the slider's hour.
 
 - **Weather label.** Sunny, Partly sunny or Overcast by sunFactor alone (see the
   thresholds above).
@@ -182,79 +186,78 @@ cloud cover.
 
 ### Map layers and look
 
+**Basemap switch** (Map is the default; the choice is remembered).
+
+- **Map.** The OpenFreeMap "liberty" style, restyled after it loads
+  (`src/lib/basemap.ts`) so that shadows and sunlight are the visual focus:
+  every point-of-interest layer (shops, restaurants, offices) is hidden, along
+  with one-way arrows, road shields and airport icons; bus stops are hidden,
+  rail and metro stations stay, small and pale; street names stay, small and
+  low-contrast; land, water, roads and rail are recoloured to light neutrals.
+- **Satellite.** Esri World Imagery as a raster layer above the drawn land and
+  roads and below the sunlight tint, the shadows, the buildings and the labels.
+  The 3D buildings turn into faint glass boxes so the real roofs show, and the
+  labels switch to white with a dark halo. A **photo opacity** slider (30% to
+  100%, default 85%) lets the drawn map show through and keeps the computed
+  shadows readable. The imagery tiles are only requested once Satellite is
+  switched on.
+
+**Toggles.**
+
+- **Sun direction** (on by default). A sun icon is placed on an ellipse inside
+  the free part of the map, in the screen direction the sunlight comes from.
+  That direction is found by projecting a point 300 m toward the sun's bearing
+  onto the screen, so it stays right when the map is rotated or tilted. Beams
+  run from the icon across the map, the way the light travels. The label gives
+  compass direction, height above the horizon and sunFactor
+  (`src/lib/sunIndicator.ts`). It is hidden when the sun is down.
 - **Sunlight overlay** (off by default). One warm yellow, translucent polygon
   over the whole map, placed just below the shadow layer. Shadows cover it, so
-  only sunlit ground looks tinted. No polygon union is involved. Its opacity
+  only sunlit ground looks tinted. It shows *how much* ground is lit, not where
+  the light comes from; that is the indicator's job. Its opacity
   (`src/lib/overlay.ts`) is 0 when the sun is down, 0.12 when the sun is up
   under full cloud, and rises in a straight line to 0.35 at sunFactor 1.
 - **3D terrain** (off by default). Elevation tiles drive both the terrain mesh,
-  drawn at 1.5 times true height so city-scale relief is readable, and a
-  hillshade layer lit from the sun's bearing. The tiles are requested only once
-  the layer is switched on. Shadows are still computed for flat ground and are
-  lifted 1.5 m so the terrain does not hide them.
-- **Street details** (on by default). See the next section.
-- **Sky and light.** The sky colours switch between day, golden hour and night,
-  and buildings are lit from the sun's real bearing and height.
-- The map renders at the screen's `devicePixelRatio`, and the camera can pitch
-  up to 85 degrees.
+  at true scale, and a hillshade layer lit from the sun's bearing. The tiles are
+  requested only once the layer is switched on. Shadows are still computed for
+  flat ground and are lifted 1.5 m so the terrain does not hide them. See the
+  accuracy note under Known limitations.
 
-The toggles are stored in `localStorage` (`sunspot:sunlight-overlay`,
-`sunspot:terrain`, `sunspot:street-details`).
+Other details: the sky colours switch between day, golden hour and night,
+buildings are lit from the sun's real bearing and height, the map renders at
+the screen's `devicePixelRatio`, and the camera can pitch up to 85 degrees.
 
-**Basemap.** The style is still OpenFreeMap "liberty", restyled after it loads
-(`src/lib/basemap.ts`) so that shadows and sunlight are the visual focus:
+Settings are stored in `localStorage`: `sunspot:basemap`,
+`sunspot:imagery-opacity`, `sunspot:sun-direction`, `sunspot:sunlight-overlay`
+and `sunspot:terrain`.
 
-- Every point-of-interest layer (shops, restaurants, offices) is hidden, along
-  with one-way arrows, road shields and airport icons.
-- Bus stops are hidden because they crowd a city centre. Rail and metro stations
-  stay, small and pale.
-- Street names stay, but smaller and low-contrast.
-- Land, water, roads and rail are recoloured to light neutral tones.
+### Satellite imagery and the Esri key
 
-### Street details from OpenStreetMap (Overpass API)
+The Satellite basemap uses Esri World Imagery (`src/lib/imagery.ts`).
 
-Benches, trees and street lamps come from OpenStreetMap through the public
-[Overpass API](https://wiki.openstreetmap.org/wiki/Overpass_API)
-(`src/lib/overpass.ts`). The query asks for three kinds of node inside a box:
-`amenity=bench`, `natural=tree` and `highway=street_lamp`.
+- **Without a key** (the default) tiles come from
+  `server.arcgisonline.com`. This works out of the box and is meant for local
+  development and personal use.
+- **With a key**, set `VITE_ESRI_KEY` and every tile request goes to
+  `ibasemaps-api.arcgis.com` with `?token=<key>` appended. Esri's terms expect
+  public sites to use an ArcGIS account, so do this before publishing a site
+  that offers the Satellite basemap.
 
-How they are drawn and used (`src/lib/furniture.ts`):
+To set the key locally, copy `.env.example` to `.env.local` and fill it in:
 
-- **Trees** are a trunk and a canopy. Height comes from the `height` tag, else
-  8 m; canopy radius is half of `diameter_crown`, else 3 m. The trunk is the
-  lower 40% of the height.
-- **Trees cast shadows** through the same pipeline as buildings. A canopy is a
-  12-sided footprint floating between the trunk top and the tree top, so its
-  shadow is that footprint swept from where the underside's shadow lands to
-  where the top's shadow lands. Tree shade counts in the spot check too.
-- **Lamps** are thin posts, 6 m unless tagged. They cast no shadow.
-- **Benches** are dots: amber in the sun, blue in shade, grey when the sun is
-  down, at the slider's time.
+```
+VITE_ESRI_KEY=your-key-here
+```
 
-**Rate-limit etiquette.** The Overpass servers are free, shared and run by
-volunteers. The app is built to ask rarely and ask small:
+For the GitHub Pages build, add a repository secret named `VITE_ESRI_KEY`
+(**Settings > Secrets and variables > Actions**); the deploy workflow passes it
+to the build, and builds without the secret simply stay keyless.
 
-- Nothing is requested below zoom 16, or while the toggle is off.
-- One request per map area, sent 600 ms after the map settles, so a string of
-  pans and zooms costs one request.
-- The request box is the view shrunk to at most 0.016 degrees per side around
-  the centre (roughly 1.4 km by 1.8 km at Athens) and snapped to a 0.004 degree
-  grid. Results are cached in memory by that box, so small pans reuse the cache.
-- Responses are capped at 4,000 elements, with a 10 s server-side timeout.
-- If the first server (`overpass-api.de`) fails or times out after 8 s, a second
-  one (`overpass.openstreetmap.fr`) is tried once. There is no retry loop. If
-  both fail, the toggle reads "Street details unavailable right now", whatever
-  was already loaded stays on the map, and everything else keeps working.
-
-Please keep it that way if you fork this: do not poll, prefetch or loop over
-areas against the public servers. For heavy use, run your own Overpass instance.
-
-**Coverage limits.** This shows what volunteers have mapped, not what exists.
-Tree, bench and lamp coverage in OpenStreetMap is patchy and varies street by
-street: in central Athens one request box returned 185 trees, 118 benches and
-31 lamps, while many real trees and almost all lamps are missing. Tree height
-and canopy size are rarely tagged, so most trees use the 8 m and 3 m defaults.
-An area with no trees on the map is not necessarily a treeless area.
+Getting a key: create a free account at
+[developers.arcgis.com](https://developers.arcgis.com/), create an API key with
+the basemap (location services) privilege, and **restrict it to your site's
+address as an allowed referrer**. The key is compiled into the public site, so
+anyone can read it; the referrer restriction is what stops others from using it.
 
 ### Weather label thresholds
 
@@ -337,15 +340,21 @@ a paid GitHub plan.
 - **Heights are approximate.** OpenStreetMap building heights are incomplete.
   Where a height is missing, the tiles supply a default or an estimate from the
   number of levels, so shadow lengths are approximate.
-- **Only buildings and mapped trees cast shadows.** Terrain (hills) and roof
-  shapes are not modelled. Every building is a flat-roofed box on flat ground,
-  and courtyards are treated as filled.
-- **Trees are rough.** Only trees mapped in OpenStreetMap exist for the app,
-  and only when street details are loaded (zoom 16 and closer). Each is a
-  solid, round canopy of a default size unless tagged, so real dappled or
-  seasonal shade is not captured.
-- **Street details depend on a shared public service.** Overpass can be slow or
-  unavailable; the app then simply shows no street details.
+- **Only buildings cast shadows.** Trees, terrain (hills) and roof shapes are
+  not modelled. Every building is a flat-roofed box on flat ground, and
+  courtyards are treated as filled. On the Satellite basemap you can see the
+  trees, but they do not shade anything in the calculation.
+- **A satellite photo has its own shadows.** The photo was taken at one moment
+  on one day, and the real shadows from that moment are part of the picture.
+  The computed shadows for your chosen time are drawn on top, so in places you
+  will see both. Lower the photo opacity to tell them apart. The photo can also
+  be several years old.
+- **Terrain is coarse.** The free elevation data is a grid of about 30 m.
+  Checked against known heights in Athens: Lycabettus summit reads 244 to 258 m
+  (real 277 m), the Acropolis 137 to 146 m (real 156 m), Philopappou 97 to
+  112 m (real 147 m), and flat Omonia about 85 m (real about 75 m). Summits are
+  shaved by 20 to 50 m and flat ground sits about 10 m high. It is drawn at
+  true scale and is a visual aid only.
 - **Roofs and upper floors.** Shade is computed at ground level. A marker placed
   on a building ignores that building.
 - **sunFactor is an estimate.** The clear-sky model assumes clean air, and the
@@ -366,17 +375,17 @@ a paid GitHub plan.
   several days ahead is a rough guide. Shadows work for any date; weather does
   not.
 - **Zoom.** Shadows and the click analysis need building outlines, which load
-  from zoom 15. Very busy views shade only the nearest 1,500 buildings and
-  1,500 trees, and track the nearest 400 benches.
+  from zoom 15. Very busy views shade only the nearest 1,500 buildings.
 
 ## Attribution
 
 Map data © [OpenStreetMap](https://www.openstreetmap.org/copyright)
 contributors, available under the
-[Open Database License (ODbL)](https://opendatacommons.org/licenses/odbl/). This
-covers both the basemap and the street details (benches, trees, lamps) fetched
-through the Overpass API. Tiles and style by [OpenFreeMap](https://openfreemap.org/)
+[Open Database License (ODbL)](https://opendatacommons.org/licenses/odbl/).
+Tiles and style by [OpenFreeMap](https://openfreemap.org/)
 (© OpenMapTiles). Weather and geocoding by [Open-Meteo](https://open-meteo.com/).
 Terrain from [AWS Terrain Tiles](https://registry.opendata.aws/terrain-tiles/)
 (Mapzen), built from the sources listed in the
 [Tilezen Joerd attribution](https://github.com/tilezen/joerd/blob/master/docs/attribution.md).
+Satellite imagery: Powered by [Esri](https://www.esri.com). Sources: Esri,
+Maxar, Earthstar Geographics, and the GIS User Community.
