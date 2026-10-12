@@ -504,12 +504,12 @@ export function MapView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Shade keeps one clear strength per basemap; cloud never fades it. The
-  // sun-hours map takes its place while it is on: both at once cannot be read.
+  // Shade keeps one clear strength per basemap; cloud never fades it. It stays
+  // on, drawn over the sun-hours map, so the slider still shows the shade moving.
   useEffect(() => {
     const map = mapRef.current
     if (!ready || !map?.getLayer(SHADOW_LAYER)) return
-    map.setPaintProperty(SHADOW_LAYER, 'raster-opacity', showSunHours ? 0 : SHADE_OPACITY[basemap])
+    map.setPaintProperty(SHADOW_LAYER, 'raster-opacity', SHADE_OPACITY[basemap])
     map.setPaintProperty(SUN_HOURS_LAYER, 'raster-opacity', showSunHours ? SUN_HOURS_OPACITY[basemap] : 0)
   }, [ready, basemap, showSunHours])
 
@@ -648,6 +648,12 @@ export function MapView({
               {item.label}
             </span>
           ))}
+          {hint === null && (
+            <span className="map-legend__band map-legend__band--shade">
+              <i style={{ background: SHADE_FILL }} aria-hidden="true" />
+              shade at {shadeTimeLabel}
+            </span>
+          )}
           <span className="map-legend__note">Building shade only; cloud is not counted.</span>
         </div>
       )}

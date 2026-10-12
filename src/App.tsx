@@ -306,7 +306,7 @@ export default function App() {
                   {
                     id: 'sun-hours',
                     label: 'Sun hours',
-                    hint: 'Colours the ground by how long it is in the sun during your time window (replaces the shade)',
+                    hint: 'Colours the ground by how long it is in the sun during your time window',
                     checked: showSunHours,
                     onChange: setShowSunHours,
                   },

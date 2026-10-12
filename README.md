@@ -242,8 +242,8 @@ cloud cover.
   (purple), a third to two thirds (coral), over two thirds (orange), and sun
   the whole time, which is left **without colour** so open ground does not
   turn the map into one flat tint. A legend gives the bands in minutes. While
-  it is on it replaces the blue shade, because the two cannot be read together,
-  and the slider only moves the sun on its path. It counts building shade
+  it is on, the blue shade for the slider's time stays visible, drawn over the
+  colours, and still moves with the slider; the colours do not. It counts building shade
   only: cloud is not included, and a sample with the sun below the horizon
   counts as shade. It is repainted when the map or the window changes (about a
   quarter of a second on the test machine), not on slider steps.
