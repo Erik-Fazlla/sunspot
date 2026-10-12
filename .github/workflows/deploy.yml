@@ -30,6 +30,8 @@ jobs:
         env:
           # Project pages are served from /<repo-name>/.
           BASE_PATH: /${{ github.event.repository.name }}/
+          # Optional ArcGIS key for the Satellite basemap; empty when the secret is not set.
+          VITE_ESRI_KEY: ${{ secrets.VITE_ESRI_KEY }}
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

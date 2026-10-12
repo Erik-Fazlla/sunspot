@@ -880,6 +880,190 @@ p {
   font-weight: 500;
 }
 
+/* ---------- sun direction indicator ---------- */
+
+.sun-indicator {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  /* Placed by MapView through these variables. */
+  transform: translate(var(--sun-x, -400px), var(--sun-y, -400px));
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.35s ease;
+}
+
+.sun-indicator.is-visible {
+  opacity: 1;
+}
+
+.sun-indicator__sun {
+  position: absolute;
+  top: -18px;
+  left: -18px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #fff6cf, #ffc21f 55%, #f08a00);
+  box-shadow:
+    0 0 0 6px rgba(255, 194, 31, 0.3),
+    0 0 28px 12px rgba(255, 176, 32, 0.5),
+    0 2px 8px rgba(20, 26, 45, 0.4);
+}
+
+/* Three parallel beams leaving the sun, fading with distance and drifting away from it. */
+.sun-indicator__rays {
+  --beam: rgba(255, 170, 12, 0.95);
+  position: absolute;
+  top: -15px;
+  left: 0;
+  width: 320px;
+  height: 30px;
+  transform-origin: 0 50%;
+  transform: rotate(var(--ray-angle, 0rad)) translateX(30px);
+  background: linear-gradient(
+    to bottom,
+    transparent 0 3px,
+    var(--beam) 3px 6px,
+    transparent 6px 13.5px,
+    var(--beam) 13.5px 16.5px,
+    transparent 16.5px 24px,
+    var(--beam) 24px 27px,
+    transparent 27px
+  );
+  filter: drop-shadow(0 0 1.5px rgba(90, 50, 0, 0.75));
+  -webkit-mask-image: linear-gradient(to right, #000, transparent),
+    repeating-linear-gradient(to right, #000 0 18px, transparent 18px 28px);
+  -webkit-mask-composite: source-in;
+  mask-image: linear-gradient(to right, #000, transparent),
+    repeating-linear-gradient(to right, #000 0 18px, transparent 18px 28px);
+  mask-composite: intersect;
+  animation: beam-drift 1.4s linear infinite;
+}
+
+.sun-indicator__label {
+  position: absolute;
+  top: 30px;
+  left: 0;
+  transform: translateX(-50%);
+  padding: 5px 11px;
+  border-radius: 999px;
+  background: rgba(27, 34, 51, 0.9);
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: 0 4px 14px rgba(20, 26, 45, 0.35);
+}
+
+/* ---------- basemap switch ---------- */
+
+.basemap {
+  margin-bottom: 14px;
+}
+
+.segmented {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 12px;
+  background: rgba(27, 34, 51, 0.08);
+}
+
+.segmented__option {
+  height: 34px;
+  border: 0;
+  border-radius: 9px;
+  background: none;
+  font-weight: 600;
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition:
+    background 0.2s ease,
+    color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.segmented__option:hover {
+  color: var(--ink);
+}
+
+.segmented__option.is-active {
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: 0 1px 4px rgba(20, 26, 45, 0.18);
+}
+
+.opacity {
+  display: block;
+  margin-top: 10px;
+  animation: rise 0.25s var(--ease);
+}
+
+.opacity__label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.opacity__label strong {
+  color: var(--ink);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.opacity small {
+  display: block;
+  font-size: 11.5px;
+  color: var(--ink-soft);
+}
+
+.opacity input[type='range'] {
+  --fill: 0%;
+  width: 100%;
+  height: 22px;
+  margin: 2px 0 0;
+  background: none;
+  appearance: none;
+  cursor: pointer;
+}
+
+.opacity input[type='range']::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(to right, var(--ink) var(--fill), rgba(27, 34, 51, 0.16) var(--fill));
+}
+
+.opacity input[type='range']::-moz-range-track {
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(to right, var(--ink) var(--fill), rgba(27, 34, 51, 0.16) var(--fill));
+}
+
+.opacity input[type='range']::-webkit-slider-thumb {
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  margin-top: -6px;
+  border: 3px solid #fff;
+  border-radius: 50%;
+  background: var(--ink);
+  box-shadow: 0 2px 6px rgba(20, 26, 45, 0.35);
+}
+
+.opacity input[type='range']::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: 3px solid #fff;
+  border-radius: 50%;
+  background: var(--ink);
+  box-shadow: 0 2px 6px rgba(20, 26, 45, 0.35);
+}
+
 /* ---------- layer toggles ---------- */
 
 .toggles {
@@ -975,6 +1159,17 @@ p {
 }
 
 /* ---------- motion ---------- */
+
+@keyframes beam-drift {
+  to {
+    -webkit-mask-position:
+      0 0,
+      28px 0;
+    mask-position:
+      0 0,
+      28px 0;
+  }
+}
 
 @keyframes rise {
   from {

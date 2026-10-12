@@ -45,8 +45,12 @@ const RAIL = '#d8d4ce'
  * Work out the overrides for a list of style layers. Pure, so the rules can
  * be read (and tested) without a map.
  */
-export function cleanBasemapChanges(layers: BasemapLayer[]): BasemapChange[] {
+export function cleanBasemapChanges(layers: BasemapLayer[], onImagery = false): BasemapChange[] {
   const changes: BasemapChange[] = []
+  // Over a satellite photo, pale grey text would vanish: labels turn white with a dark halo.
+  const label = onImagery
+    ? { street: '#ffffff', place: '#ffffff', transit: '#e8eef6', water: '#dbe8f5', halo: 'rgba(14, 18, 30, 0.85)' }
+    : { street: '#a6a099', place: '#7f7a73', transit: '#8b97a3', water: '#9fb2c2', halo: LABEL_HALO }
   const paint = (id: string, property: string, value: unknown) =>
     changes.push({ kind: 'paint', id, property, value })
   const layout = (id: string, property: string, value: unknown) =>
@@ -93,8 +97,8 @@ export function cleanBasemapChanges(layers: BasemapLayer[]): BasemapChange[] {
         changes.push({ kind: 'filter', id, value: ['match', ['get', 'class'], ['rail'], true, false] })
         layout(id, 'icon-size', 0.55)
         layout(id, 'text-size', 10)
-        paint(id, 'text-color', '#8b97a3')
-        paint(id, 'text-halo-color', LABEL_HALO)
+        paint(id, 'text-color', label.transit)
+        paint(id, 'text-halo-color', label.halo)
         paint(id, 'icon-opacity', 0.75)
       } else {
         // Shops, restaurants, offices and every other point of interest.
@@ -111,22 +115,22 @@ export function cleanBasemapChanges(layers: BasemapLayer[]): BasemapChange[] {
     if (sourceLayer === 'transportation_name') {
       // Street names stay, small and low-contrast.
       layout(id, 'text-size', ['interpolate', ['linear'], ['zoom'], 13, 9, 16, 10.5, 19, 12])
-      paint(id, 'text-color', '#a6a099')
-      paint(id, 'text-halo-color', LABEL_HALO)
+      paint(id, 'text-color', label.street)
+      paint(id, 'text-halo-color', label.halo)
       paint(id, 'text-halo-width', 1.2)
       continue
     }
 
     if (sourceLayer === 'place') {
-      paint(id, 'text-color', '#7f7a73')
-      paint(id, 'text-halo-color', LABEL_HALO)
+      paint(id, 'text-color', label.place)
+      paint(id, 'text-halo-color', label.halo)
       layout(id, 'icon-image', '')
       continue
     }
 
     if (sourceLayer === 'water_name' || sourceLayer === 'waterway') {
-      paint(id, 'text-color', '#9fb2c2')
-      paint(id, 'text-halo-color', LABEL_HALO)
+      paint(id, 'text-color', label.water)
+      paint(id, 'text-halo-color', label.halo)
     }
   }
   return changes
@@ -141,8 +145,8 @@ interface StyleTarget {
   setFilter(id: string, filter: never): unknown
 }
 
-export function applyCleanBasemap(map: StyleTarget): void {
-  for (const change of cleanBasemapChanges(map.getStyle().layers)) {
+export function applyCleanBasemap(map: StyleTarget, onImagery = false): void {
+  for (const change of cleanBasemapChanges(map.getStyle().layers, onImagery)) {
     if (!map.getLayer(change.id)) continue
     try {
       if (change.kind === 'hide') map.setLayoutProperty(change.id, 'visibility', 'none')
