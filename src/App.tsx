@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { LayerToggles } from './components/LayerToggles'
-import { MapView, type LngLat } from './components/MapView'
+import { BasemapControl, LayerToggles } from './components/LayerToggles'
+import { MapView, type Basemap, type LngLat } from './components/MapView'
 import { ResultCard } from './components/ResultCard'
 import { SearchBox } from './components/SearchBox'
 import { SunArc } from './components/SunArc'
@@ -8,7 +8,7 @@ import { TimeControls } from './components/TimeControls'
 import { TimeSlider } from './components/TimeSlider'
 import { WeatherPanel } from './components/WeatherPanel'
 import { useForecast, useTimezone } from './hooks/useForecast'
-import { useStoredBoolean } from './hooks/useStoredBoolean'
+import { useStoredBoolean, useStoredChoice, useStoredNumber } from './hooks/useStoredBoolean'
 import {
   DEFAULT_DATE_OFFSET_DAYS,
   DEFAULT_END_MIN,
@@ -20,10 +20,11 @@ import {
   STEP_MINUTES,
 } from './lib/constants'
 import { analyzePoint } from './lib/analysis'
+import { clampImageryOpacity, IMAGERY_DEFAULT_OPACITY } from './lib/imagery'
 import { hourSunFactor } from './lib/sunFactor'
 import type { Place } from './lib/geocode'
 import type { Building } from './lib/shadow'
-import { addDays, diffDays, formatDateLabel, todayInTz, zonedToUtc } from './lib/time'
+import { addDays, diffDays, formatDateLabel, formatMinutes, todayInTz, zonedToUtc } from './lib/time'
 
 type GeoState = { status: 'idle' } | { status: 'locating' } | { status: 'error'; message: string }
 
@@ -39,8 +40,12 @@ export default function App() {
   const [point, setPoint] = useState<LngLat | null>(null)
   const [buildings, setBuildings] = useState<Building[]>([])
   const [panelOpen, setPanelOpen] = useState(true)
-  const [showSunlight, setShowSunlight] = useStoredBoolean('sunspot:sunlight-overlay', false)
+  const [showSunHours, setShowSunHours] = useStoredBoolean('sunspot:sun-hours', false)
   const [showTerrain, setShowTerrain] = useStoredBoolean('sunspot:terrain', false)
+  const [showSunDirection, setShowSunDirection] = useStoredBoolean('sunspot:sun-direction', true)
+  const [basemap, setBasemap] = useStoredChoice<Basemap>('sunspot:basemap', 'map', ['map', 'satellite'])
+  const [storedOpacity, setImageryOpacity] = useStoredNumber('sunspot:imagery-opacity', IMAGERY_DEFAULT_OPACITY)
+  const imageryOpacity = clampImageryOpacity(storedOpacity)
 
   // Weather and timezone follow the clicked point when there is one.
   const target = point ?? place
@@ -143,9 +148,17 @@ export default function App() {
       <MapView
         center={place}
         sunTime={sunTime}
-        sunFactor={currentFactor ?? 1}
-        showSunlight={showSunlight}
+        date={date}
+        timezone={timezone}
+        windowStartMin={startMin}
+        windowEndMin={windowEnd}
+        sunStrength={currentFactor}
+        basemap={basemap}
+        imageryOpacity={imageryOpacity}
+        showSunDirection={showSunDirection}
+        showSunHours={showSunHours}
         showTerrain={showTerrain}
+        shadeTimeLabel={formatMinutes(currentMin)}
         point={point}
         onPointSelect={(selected) => {
           setPoint(selected)
@@ -275,19 +288,32 @@ export default function App() {
 
             <section className="section">
               <h2 className="section__title">Map layers</h2>
+              <BasemapControl
+                basemap={basemap}
+                onBasemapChange={setBasemap}
+                imageryOpacity={imageryOpacity}
+                onImageryOpacityChange={setImageryOpacity}
+              />
               <LayerToggles
                 toggles={[
                   {
-                    id: 'sunlight',
-                    label: 'Sunlight overlay',
-                    hint: 'Warm tint on sunlit ground, paler under cloud',
-                    checked: showSunlight,
-                    onChange: setShowSunlight,
+                    id: 'sun-direction',
+                    label: 'Sun path',
+                    hint: 'The sun’s path across the sky for this day, and where its light comes from now',
+                    checked: showSunDirection,
+                    onChange: setShowSunDirection,
+                  },
+                  {
+                    id: 'sun-hours',
+                    label: 'Sun hours',
+                    hint: 'Colours the ground by how long it is in the sun during your time window (replaces the shade)',
+                    checked: showSunHours,
+                    onChange: setShowSunHours,
                   },
                   {
                     id: 'terrain',
                     label: '3D terrain',
-                    hint: 'Hills and hillshade (shadows still assume flat ground)',
+                    hint: 'Approximate relief at true scale (coarse 30 m data); shadows assume flat ground',
                     checked: showTerrain,
                     onChange: setShowTerrain,
                   },
@@ -315,7 +341,12 @@ export default function App() {
                 rel="noreferrer"
               >
                 Mapzen, AWS Terrain Tiles
-              </a>
+              </a>{' '}
+              · satellite imagery powered by{' '}
+              <a href="https://www.esri.com" target="_blank" rel="noreferrer">
+                Esri
+              </a>{' '}
+              (Esri, Maxar, Earthstar Geographics, and the GIS User Community)
             </footer>
           </div>
         </div>

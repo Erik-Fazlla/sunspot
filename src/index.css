@@ -35,9 +35,16 @@ body,
   margin: 0;
 }
 
+/* The page itself never scrolls: only the panel body does. */
+html,
 body {
   overflow: hidden;
-  background: #dfe5ea;
+  overscroll-behavior: none;
+}
+
+body {
+  /* Same tone as the map background, so nothing grey shows while tiles load. */
+  background: #f4f1ec;
 }
 
 button,
@@ -68,10 +75,15 @@ p {
 
 /* ---------- layout ---------- */
 
+/* Pinned to the visible viewport. 100dvh follows mobile toolbars as they show and hide. */
 .app {
-  position: relative;
-  height: 100dvh;
+  position: fixed;
+  top: 0;
+  left: 0;
   width: 100%;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
 }
 
 /* .app prefix outranks maplibre's own `.maplibregl-map { position: relative }`. */
@@ -109,6 +121,73 @@ p {
   white-space: nowrap;
   box-shadow: var(--elevation);
   animation: rise 0.35s var(--ease);
+}
+
+.map-legend {
+  position: absolute;
+  bottom: 58px;
+  /* Centred in the part of the map the panel leaves free. */
+  left: calc(50% + 202px);
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100vw - 460px);
+  padding: 7px 13px;
+  border-radius: 999px;
+  background: rgba(250, 247, 240, 0.94);
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  box-shadow: var(--elevation);
+  pointer-events: none;
+}
+
+.map-legend i {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  border: 2px solid #0b1c63;
+  opacity: 0.85;
+}
+
+.map-legend strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* The sun-hours legend has one chip per colour band and may wrap onto two lines. */
+.map-legend--hours {
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 5px 12px;
+  border-radius: 16px;
+}
+
+.map-legend--hours strong {
+  flex-basis: 100%;
+  text-align: center;
+}
+
+.map-legend__band {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.map-legend--hours i {
+  width: 13px;
+  height: 13px;
+  border: 1px solid rgba(20, 26, 45, 0.35);
+  opacity: 1;
+}
+
+.map-legend__note {
+  flex-basis: 100%;
+  text-align: center;
+  font-size: 11.5px;
+  opacity: 0.8;
 }
 
 .panel {
@@ -868,6 +947,233 @@ p {
   font-weight: 500;
 }
 
+/* ---------- sun path ---------- */
+
+.sun-path {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  animation: fade-in 0.35s ease;
+}
+
+.sun-path__svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.sun-path__svg path {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* A dark line under every bright one keeps it readable on a pale map and on a photo. */
+.sun-path__casing {
+  stroke: rgba(20, 26, 45, 0.62);
+}
+
+.sun-path__ring {
+  stroke: rgba(255, 255, 255, 0.92);
+  stroke-width: 1.5;
+}
+
+.sun-path__day {
+  stroke: #ffc21f;
+  stroke-width: 3.5;
+}
+
+.sun-path__window {
+  stroke: #ff7a1a;
+  stroke-width: 7;
+}
+
+.sun-path__hour {
+  fill: #fff;
+  stroke: rgba(20, 26, 45, 0.8);
+  stroke-width: 1.5;
+}
+
+.sun-path__horizon {
+  fill: #ffc21f;
+  stroke: rgba(20, 26, 45, 0.85);
+  stroke-width: 2;
+}
+
+.sun-path__text {
+  fill: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  paint-order: stroke;
+  stroke: rgba(20, 26, 45, 0.88);
+  stroke-width: 3.5px;
+  stroke-linejoin: round;
+}
+
+.sun-path__text--compass {
+  font-size: 11px;
+  fill: rgba(255, 255, 255, 0.85);
+}
+
+.sun-path__text--compass.is-north {
+  fill: #ff9c8a;
+}
+
+.sun-path__text--hour {
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Dots run along the ray from the sun to the ground. */
+.sun-path__svg .sun-path__ray {
+  stroke: #ffd65a;
+  stroke-width: 3.5;
+  stroke-dasharray: 2 9;
+  animation: ray-flow 0.9s linear infinite;
+}
+
+.sun-path__ray-head {
+  fill: #ffd65a;
+  stroke: rgba(20, 26, 45, 0.75);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+
+.sun-path__glow {
+  fill: rgba(255, 190, 40, 0.35);
+}
+
+.sun-path__sun {
+  fill: #ffc21f;
+  stroke: #fff6cf;
+  stroke-width: 2.5;
+  filter: drop-shadow(0 1px 4px rgba(20, 26, 45, 0.55));
+}
+
+.sun-path__label {
+  position: absolute;
+  transform: translate(-50%, 0);
+  padding: 5px 11px;
+  border-radius: 999px;
+  background: rgba(27, 34, 51, 0.9);
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: 0 4px 14px rgba(20, 26, 45, 0.35);
+}
+
+.sun-path__label.is-above {
+  transform: translate(-50%, -100%);
+}
+
+/* ---------- basemap switch ---------- */
+
+.basemap {
+  margin-bottom: 14px;
+}
+
+.segmented {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 12px;
+  background: rgba(27, 34, 51, 0.08);
+}
+
+.segmented__option {
+  height: 34px;
+  border: 0;
+  border-radius: 9px;
+  background: none;
+  font-weight: 600;
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition:
+    background 0.2s ease,
+    color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.segmented__option:hover {
+  color: var(--ink);
+}
+
+.segmented__option.is-active {
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: 0 1px 4px rgba(20, 26, 45, 0.18);
+}
+
+.opacity {
+  display: block;
+  margin-top: 10px;
+  animation: rise 0.25s var(--ease);
+}
+
+.opacity__label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.opacity__label strong {
+  color: var(--ink);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.opacity small {
+  display: block;
+  font-size: 11.5px;
+  color: var(--ink-soft);
+}
+
+.opacity input[type='range'] {
+  --fill: 0%;
+  width: 100%;
+  height: 22px;
+  margin: 2px 0 0;
+  background: none;
+  appearance: none;
+  cursor: pointer;
+}
+
+.opacity input[type='range']::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(to right, var(--ink) var(--fill), rgba(27, 34, 51, 0.16) var(--fill));
+}
+
+.opacity input[type='range']::-moz-range-track {
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(to right, var(--ink) var(--fill), rgba(27, 34, 51, 0.16) var(--fill));
+}
+
+.opacity input[type='range']::-webkit-slider-thumb {
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  margin-top: -6px;
+  border: 3px solid #fff;
+  border-radius: 50%;
+  background: var(--ink);
+  box-shadow: 0 2px 6px rgba(20, 26, 45, 0.35);
+}
+
+.opacity input[type='range']::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: 3px solid #fff;
+  border-radius: 50%;
+  background: var(--ink);
+  box-shadow: 0 2px 6px rgba(20, 26, 45, 0.35);
+}
+
 /* ---------- layer toggles ---------- */
 
 .toggles {
@@ -876,6 +1182,8 @@ p {
 }
 
 .toggle {
+  /* Anchors the hidden checkbox, so it cannot stick out of the panel and make the page scrollable. */
+  position: relative;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -884,6 +1192,11 @@ p {
 
 .toggle input {
   position: absolute;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  margin: 0;
   opacity: 0;
   pointer-events: none;
 }
@@ -957,6 +1270,18 @@ p {
 
 /* ---------- motion ---------- */
 
+@keyframes ray-flow {
+  to {
+    stroke-dashoffset: -11;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
 @keyframes rise {
   from {
     opacity: 0;
@@ -1023,6 +1348,14 @@ p {
 
   .panel__body {
     padding: 0 14px;
+  }
+
+  .map-legend {
+    top: 56px;
+    bottom: auto;
+    left: 50%;
+    max-width: calc(100vw - 24px);
+    border-radius: 14px;
   }
 
   .map-hint {

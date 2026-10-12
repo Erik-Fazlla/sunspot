@@ -151,19 +151,19 @@ describe('combinedMessage', () => {
   it('reports both geometric and effective sun when cloud leaves little beam', () => {
     // 11 effective of 40 unshaded minutes is 28% strength, under the Partly sunny floor.
     expect(combinedMessage(result(40, 20), dry, 11)).toBe(
-      'Clear of building shadows for 40 of 60 min, but cloud cuts the sun to 28% of clear-sky strength, so the light is mostly diffuse: only about 11 min of direct sun.',
+      'Clear of shadows for 40 of 60 min, but cloud cuts the sun to 28% of clear-sky strength, so the light is mostly diffuse: only about 11 min of direct sun.',
     )
   })
 
   it('says the sun comes and goes at middling strength', () => {
     expect(combinedMessage(result(40, 20), dry, 24)).toBe(
-      'Clear of building shadows for 40 of 60 min, but cloud cuts the sun to 60% of clear-sky strength, so it comes and goes: about 24 min of direct sun.',
+      'Clear of shadows for 40 of 60 min, but cloud cuts the sun to 60% of clear-sky strength, so it comes and goes: about 24 min of direct sun.',
     )
   })
 
   it('is upbeat when the sun is near full strength', () => {
     expect(combinedMessage(result(60, 0), dry, 57)).toBe(
-      'Clear of building shadows for all 60 min, and with the sun at 95% of clear-sky strength nearly all of it is direct sun: about 57 min.',
+      'Clear of shadows for all 60 min, and with the sun at 95% of clear-sky strength nearly all of it is direct sun: about 57 min.',
     )
   })
 
@@ -206,7 +206,7 @@ describe('combinedMessage', () => {
 
   it('reports full building shade without promising sun', () => {
     expect(combinedMessage(result(0, 60), dry, 0)).toBe(
-      'Building shadows cover this spot for the whole window, so it gets no direct sun whatever the sky does.',
+      'Shadows cover this spot for the whole window, so it gets no direct sun whatever the sky does.',
     )
   })
 
