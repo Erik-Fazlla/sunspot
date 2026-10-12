@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AttributionControl,
   Map as MapLibreMap,
@@ -48,7 +48,9 @@ import {
   type ShadowExtent,
 } from '../lib/shadowCanvas'
 import { getSunPosition, type SunPosition } from '../lib/sun'
-import { sunDirectionLabel, sunIndicatorPosition } from '../lib/sunIndicator'
+import { sunDirectionLabel } from '../lib/sunIndicator'
+import { sunPathDay } from '../lib/sunPath'
+import { SunPathOverlay } from './SunPathOverlay'
 
 // Vite pre-bundles maplibre-gl, so its "worker next to the module" lookup
 // would miss. Point it at a worker bundle Vite builds for us.
@@ -91,8 +93,6 @@ const HILLSHADE_BEFORE = 'waterway_tunnel'
 
 /** Keeps roofs readable at sunrise and sunset, when a true sun angle would leave them dark. */
 const MAX_LIGHT_POLAR_DEG = 55
-/** Width the control panel takes on wide screens; the sun indicator stays clear of it. */
-const PANEL_WIDTH_PX = 404
 
 type SkyPhase = 'day' | 'golden' | 'night'
 
@@ -131,13 +131,19 @@ interface Props {
   center: LngLat
   /** The instant whose shadows are drawn. */
   sunTime: Date
+  /** The selected date (YYYY-MM-DD) and timezone; the sun's path is drawn for this day. */
+  date: string
+  timezone: string
+  /** The selected time window, in minutes after midnight; marked on the sun's path. */
+  windowStartMin: number
+  windowEndMin: number
   /** 0 to 1: how much direct sun the weather lets through; null without a forecast. */
   sunStrength: number | null
   /** The drawn map, or a satellite photo under the shadows. */
   basemap: Basemap
   /** Opacity of the satellite photo, 0 to 1. */
   imageryOpacity: number
-  /** Show where the sunlight comes from. */
+  /** Show the sun's path for the day and where the light comes from now. */
   showSunDirection: boolean
   /** Tint sunlit ground with a warm overlay. */
   showSunlight: boolean
@@ -154,6 +160,10 @@ interface Props {
 export function MapView({
   center,
   sunTime,
+  date,
+  timezone,
+  windowStartMin,
+  windowEndMin,
   sunStrength,
   basemap,
   imageryOpacity,
@@ -166,7 +176,6 @@ export function MapView({
   onBuildingsChange,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
-  const indicatorRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MapLibreMap | null>(null)
   const markerRef = useRef<Marker | null>(null)
   const buildingsRef = useRef<Building[]>([])
@@ -176,11 +185,11 @@ export function MapView({
   const extentRef = useRef<ShadowExtent | null>(null)
   const signatureRef = useRef('')
   const drawRef = useRef<() => void>(() => {})
-  const placeIndicatorRef = useRef<() => void>(() => {})
-  const sunRef = useRef<SunPosition | null>(null)
   const callbacksRef = useRef({ onPointSelect, onBuildingsChange })
   const [hint, setHint] = useState<Hint>(null)
   const [ready, setReady] = useState(false)
+  // The loaded map, for the overlay that draws on top of it.
+  const [loadedMap, setLoadedMap] = useState<MapLibreMap | null>(null)
   // Without a forecast the sunlight overlay is drawn as under a clear sky.
   const sunFactor = sunStrength ?? 1
   const skyPhaseRef = useRef<SkyPhase | null>(null)
@@ -188,37 +197,6 @@ export function MapView({
   useEffect(() => {
     callbacksRef.current = { onPointSelect, onBuildingsChange }
   })
-
-  // Moves the sun icon to the screen direction the light comes from. Runs on
-  // every camera frame, so it writes straight to the element instead of going
-  // through React state.
-  useEffect(() => {
-    placeIndicatorRef.current = () => {
-      const map = mapRef.current
-      const element = indicatorRef.current
-      const sun = sunRef.current
-      if (!map || !element || !sun || sun.altitudeRad <= 0) return
-      const mapCenter = map.getCenter()
-      // A point 300 m toward the sun, projected to the screen, gives the
-      // direction exactly, whatever the map's rotation and tilt.
-      const bearing = (sun.bearingDeg * Math.PI) / 180
-      const step = metersToDegrees(300 * Math.sin(bearing), 300 * Math.cos(bearing), mapCenter.lat)
-      const from = map.project(mapCenter)
-      const to = map.project([mapCenter.lng + step.dLon, mapCenter.lat + step.dLat])
-      const angle = Math.atan2(to.y - from.y, to.x - from.x)
-      const { clientWidth: width, clientHeight: height } = map.getContainer()
-      const wide = window.matchMedia('(min-width: 721px)').matches
-      // Wide screens: keep clear of the panel on the left. Phones: stay above the bottom sheet.
-      const insets = wide
-        ? { left: PANEL_WIDTH_PX, right: 0, top: 0, bottom: 0 }
-        : { left: 0, right: 0, top: 0, bottom: height * 0.5 }
-      const position = sunIndicatorPosition(angle, width, height, insets)
-      element.style.setProperty('--sun-x', `${position.x.toFixed(1)}px`)
-      element.style.setProperty('--sun-y', `${position.y.toFixed(1)}px`)
-      // The rays leave the sun and travel across the map, away from it.
-      element.style.setProperty('--ray-angle', `${(angle + Math.PI).toFixed(4)}rad`)
-    }
-  }, [])
 
   // Redraws the shadow layer for the current view and `sunTime`.
   useEffect(() => {
@@ -251,8 +229,6 @@ export function MapView({
       const mapCenter = map.getCenter()
       // The sun's direction is effectively the same across one viewport.
       const sun = getSunPosition(sunTime, mapCenter.lat, mapCenter.lng)
-      sunRef.current = sun
-      placeIndicatorRef.current()
       // Light the scene from where the sun actually is: walls facing it are
       // bright, the sky follows the time of day and the hills are shaded to match.
       const up = sun.altitudeRad > 0
@@ -327,13 +303,9 @@ export function MapView({
     let resizeTimer: ReturnType<typeof setTimeout> | undefined
     const resizeMap = () => {
       map.resize()
-      placeIndicatorRef.current()
       // Mobile browsers settle their toolbars a moment after the event.
       clearTimeout(resizeTimer)
-      resizeTimer = setTimeout(() => {
-        map.resize()
-        placeIndicatorRef.current()
-      }, 200)
+      resizeTimer = setTimeout(() => map.resize(), 200)
     }
     const resizeObserver = new ResizeObserver(resizeMap)
     resizeObserver.observe(containerRef.current!)
@@ -454,9 +426,9 @@ export function MapView({
         map.setPaintProperty(BUILDING_3D_LAYER, 'fill-extrusion-color', '#efeae0')
       }
       setReady(true)
+      setLoadedMap(map)
       refresh()
     })
-    map.on('move', () => placeIndicatorRef.current())
     map.on('moveend', scheduleRefresh)
     map.on('sourcedata', (event) => {
       if (event.sourceId === BUILDING_SOURCE && map.isSourceLoaded(BUILDING_SOURCE)) scheduleRefresh()
@@ -473,6 +445,7 @@ export function MapView({
       window.removeEventListener('orientationchange', resizeMap)
       window.visualViewport?.removeEventListener('resize', resizeMap)
       ratioQuery?.removeEventListener('change', onRatioChange)
+      setLoadedMap(null)
       map.remove()
       mapRef.current = null
     }
@@ -601,31 +574,28 @@ export function MapView({
     }
   }, [point])
 
-  // Label for the indicator. The sun is in practically the same place for the
-  // whole view, so the selected location stands in for the map centre here.
-  const labelSun = getSunPosition(sunTime, center.lat, center.lon)
-  const sunUp = labelSun.altitudeDeg > 0
-  const showIndicator = ready && showSunDirection && sunUp
-
-  // The icon is positioned by `placeIndicatorRef`; place it as soon as it appears.
-  useEffect(() => {
-    if (showIndicator) placeIndicatorRef.current()
-  }, [showIndicator])
+  // The sun's path and its label. The sun is in practically the same place for
+  // the whole view, so the selected location stands in for the map centre here.
+  const pathDay = useMemo(
+    () => sunPathDay(date, timezone, center.lat, center.lon),
+    [date, timezone, center.lat, center.lon],
+  )
+  const pathSun = getSunPosition(sunTime, center.lat, center.lon)
 
   return (
     <>
       <div ref={containerRef} className="map" aria-label="3D map" />
       <div className={`map-dim${hint === 'night' ? ' is-night' : ''}`} />
-      <div
-        ref={indicatorRef}
-        className={`sun-indicator${showIndicator ? ' is-visible' : ''}`}
-        role="status"
-        aria-hidden={!showIndicator}
-      >
-        <div className="sun-indicator__rays" aria-hidden="true" />
-        <div className="sun-indicator__sun" aria-hidden="true" />
-        <div className="sun-indicator__label">{sunDirectionLabel(labelSun, sunStrength)}</div>
-      </div>
+      {loadedMap && showSunDirection && (
+        <SunPathOverlay
+          map={loadedMap}
+          day={pathDay}
+          windowStartMin={windowStartMin}
+          windowEndMin={windowEndMin}
+          sun={pathSun}
+          label={sunDirectionLabel(pathSun, sunStrength)}
+        />
+      )}
       {ready && hint === null && (
         <div className="map-legend">
           <i style={{ background: SHADE_FILL }} aria-hidden="true" />

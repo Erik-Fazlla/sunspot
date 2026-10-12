@@ -148,6 +148,10 @@ export default function App() {
       <MapView
         center={place}
         sunTime={sunTime}
+        date={date}
+        timezone={timezone}
+        windowStartMin={startMin}
+        windowEndMin={windowEnd}
         sunStrength={currentFactor}
         basemap={basemap}
         imageryOpacity={imageryOpacity}
@@ -294,8 +298,8 @@ export default function App() {
                 toggles={[
                   {
                     id: 'sun-direction',
-                    label: 'Sun direction',
-                    hint: 'Sun icon and rays showing where the light comes from',
+                    label: 'Sun path',
+                    hint: 'The sun’s path across the sky for this day, and where its light comes from now',
                     checked: showSunDirection,
                     onChange: setShowSunDirection,
                   },

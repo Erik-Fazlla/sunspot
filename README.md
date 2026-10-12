@@ -29,9 +29,11 @@ service, so it costs nothing to host.
 - A **Map / Satellite** switch. Map is a quiet drawn basemap with no shop or
   restaurant icons. Satellite puts a real aerial photo under the computed
   shadows, with an opacity slider so the shadows stay readable.
-- A **sun direction indicator**: a sun icon on the side of the map the light
-  comes from, with beams pointing across it and a label such as "Sun from SW,
-  25° up, 48% strength". It turns with the map and moves with the slider.
+- A **sun path** drawn on the map: the sun's arc for the day from sunrise to
+  sunset with the hours marked, the selected window highlighted, and the sun
+  itself with an arrow showing where its light comes from and a label such as
+  "Sun from SW, 25° up, 48% strength". It turns with the map and moves with the
+  slider.
 - Optional map layers, remembered between visits: a warm **sunlight overlay** on
   sunlit ground, and **3D terrain** with hillshade.
 - A sky that follows the time of day, and building light that comes from where
@@ -111,17 +113,28 @@ on flat ground.
 ### Drawing the shadows
 
 Merging every shadow in view with a polygon union takes a second or more per
-frame in a dense city, which is too slow for the slider. So the map layer draws
-the un-merged shadow pieces as a **zero-height `fill-extrusion` layer** instead
-of a plain `fill` layer: MapLibre paints each pixel of a translucent extrusion
-layer once, so overlapping shadows do not stack into darker patches. The result
-looks like a flat fill. Exact per-building polygons (with the union) are still
-used for the click analysis, where only nearby buildings matter.
+frame in a dense city, which is too slow for the slider. So the shade is
+**painted** instead (`src/lib/shadowCanvas.ts`): every shadow piece is filled
+in one solid colour on an off-screen canvas, which merges overlaps for free,
+and the map shows that canvas as a single picture laid on the ground.
+
+- The shade is **blue with a dark outline**, a colour no aerial photo
+  contains, so it cannot be mistaken for a shadow in the picture.
+- Its strength is **constant** (46% on the map, 62% on satellite). Where shade
+  falls is geometry, so cloud never fades it; how strong the sun is shows in
+  the weather panel and the sun label.
+- **Only the ground is shaded.** Building outlines are cut back out of the
+  picture, otherwise every roof would be painted and a city block would read as
+  one blue slab.
+- A legend on the map says which time the shade is drawn for.
+
+Exact per-building polygons (with the union) are still used for the click
+analysis, where only nearby buildings matter.
 
 Shadows are drawn from zoom 15 up, for at most 1,500 buildings nearest the map
 centre. Which ones those are is worked out once per map move, not per slider
-step. Measured on a desktop GPU (RTX 2060, 1686 x 960 window) in central
-Athens: about 28 ms per slider step on the drawn map and 34 ms on satellite.
+step. Measured on a desktop GPU (RTX 2060, 929 x 909 window) in central
+Athens: about 33 to 37 ms per slider step.
 
 ### Cloud-aware sunlight (sunFactor)
 
@@ -148,10 +161,10 @@ If the forecast has no direct radiation, or the clear-sky value is under
 sunFactor = 1 - cloud_cover / 100
 ```
 
-sunFactor is used in five places:
+sunFactor is used in four places:
 
-- **Sun direction label.** The "48% strength" in the indicator is the sunFactor
-  of the slider's hour.
+- **Sun label.** The "48% strength" next to the sun on its path is the
+  sunFactor of the slider's hour.
 
 - **Weather label.** Sunny, Partly sunny or Overcast by sunFactor alone (see the
   thresholds above).
@@ -159,8 +172,6 @@ sunFactor is used in five places:
 - **Effective sun minutes.** Each 5-minute sample counts `5 * sunFactor` if it
   is clear of shadows and 0 otherwise. Forty unshaded minutes at sunFactor 0.3
   are 12 effective minutes.
-- **Shadow darkness.** Shadow opacity scales with sunFactor (never below a
-  quarter of full strength, so the geometry stays readable under cloud).
 - **Sunlight overlay.** Its opacity scales with sunFactor too.
 
 ### Which forecast row each number comes from
@@ -197,30 +208,37 @@ cloud cover.
 - **Satellite.** Esri World Imagery as a raster layer above the drawn land and
   roads and below the sunlight tint, the shadows, the buildings and the labels.
   The 3D buildings turn into faint glass boxes so the real roofs show, and the
-  labels switch to white with a dark halo. A **photo opacity** slider (30% to
-  100%, default 85%) lets the drawn map show through and keeps the computed
-  shadows readable. The imagery tiles are only requested once Satellite is
+  labels switch to white with a dark halo. A **Photo strength** slider (30% to
+  100%, default 85%) controls the photo. Up to 85% the photo is also muted
+  (greyer, flatter, lighter) so the shadows frozen into it recede behind the
+  computed blue shade; from there to 100% the muting eases off, and 100% shows
+  the untouched photo. The imagery tiles are only requested once Satellite is
   switched on.
 
 **Toggles.**
 
-- **Sun direction** (on by default). A sun icon is placed on an ellipse inside
-  the free part of the map, in the screen direction the sunlight comes from.
-  That direction is found by projecting a point 300 m toward the sun's bearing
-  onto the screen, so it stays right when the map is rotated or tilted. Beams
-  run from the icon across the map, the way the light travels. The label gives
-  compass direction, height above the horizon and sunFactor
-  (`src/lib/sunIndicator.ts`). It is hidden when the sun is down.
+- **Sun path** (on by default). A sky dome seen from above, laid on the ground
+  in the middle of the free part of the map (`src/lib/sunPath.ts`). The ring is
+  the horizon and its centre is straight overhead: the sun is drawn in its
+  compass direction, on the ring at 0° and evenly closer to the centre as it
+  climbs (30° up is two thirds of the way out). The yellow line is the whole
+  day from sunrise to sunset, with a dot on every hour and a number on every
+  third; the thick orange stretch is the selected window. The sun moves along
+  it with the slider, and a dotted arrow runs from it to the centre, the way
+  the light travels. Every point is a real ground position projected to the
+  screen, so the drawing turns and tilts with the map. The label gives compass
+  direction, height above the horizon and sunFactor. When the sun is down the
+  path stays and the sun is left out.
 - **Sunlight overlay** (off by default). One warm yellow, translucent polygon
   over the whole map, placed just below the shadow layer. Shadows cover it, so
   only sunlit ground looks tinted. It shows *how much* ground is lit, not where
-  the light comes from; that is the indicator's job. Its opacity
+  the light comes from; that is the sun path's job. Its opacity
   (`src/lib/overlay.ts`) is 0 when the sun is down, 0.12 when the sun is up
   under full cloud, and rises in a straight line to 0.35 at sunFactor 1.
 - **3D terrain** (off by default). Elevation tiles drive both the terrain mesh,
   at true scale, and a hillshade layer lit from the sun's bearing. The tiles are
   requested only once the layer is switched on. Shadows are still computed for
-  flat ground and are lifted 1.5 m so the terrain does not hide them. See the
+  flat ground; the shade picture is draped over the terrain. See the
   accuracy note under Known limitations.
 
 Other details: the sky colours switch between day, golden hour and night,

@@ -913,74 +913,113 @@ p {
   font-weight: 500;
 }
 
-/* ---------- sun direction indicator ---------- */
+/* ---------- sun path ---------- */
 
-.sun-indicator {
+.sun-path {
   position: absolute;
-  top: 0;
-  left: 0;
-  width: 0;
-  height: 0;
-  /* Placed by MapView through these variables. */
-  transform: translate(var(--sun-x, -400px), var(--sun-y, -400px));
+  inset: 0;
+  overflow: hidden;
   pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.35s ease;
+  animation: fade-in 0.35s ease;
 }
 
-.sun-indicator.is-visible {
-  opacity: 1;
+.sun-path__svg {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
-.sun-indicator__sun {
+.sun-path__svg path {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* A dark line under every bright one keeps it readable on a pale map and on a photo. */
+.sun-path__casing {
+  stroke: rgba(20, 26, 45, 0.62);
+}
+
+.sun-path__ring {
+  stroke: rgba(255, 255, 255, 0.92);
+  stroke-width: 1.5;
+}
+
+.sun-path__day {
+  stroke: #ffc21f;
+  stroke-width: 3.5;
+}
+
+.sun-path__window {
+  stroke: #ff7a1a;
+  stroke-width: 7;
+}
+
+.sun-path__hour {
+  fill: #fff;
+  stroke: rgba(20, 26, 45, 0.8);
+  stroke-width: 1.5;
+}
+
+.sun-path__horizon {
+  fill: #ffc21f;
+  stroke: rgba(20, 26, 45, 0.85);
+  stroke-width: 2;
+}
+
+.sun-path__text {
+  fill: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  paint-order: stroke;
+  stroke: rgba(20, 26, 45, 0.88);
+  stroke-width: 3.5px;
+  stroke-linejoin: round;
+}
+
+.sun-path__text--compass {
+  font-size: 11px;
+  fill: rgba(255, 255, 255, 0.85);
+}
+
+.sun-path__text--compass.is-north {
+  fill: #ff9c8a;
+}
+
+.sun-path__text--hour {
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Dots run along the ray from the sun to the ground. */
+.sun-path__svg .sun-path__ray {
+  stroke: #ffd65a;
+  stroke-width: 3.5;
+  stroke-dasharray: 2 9;
+  animation: ray-flow 0.9s linear infinite;
+}
+
+.sun-path__ray-head {
+  fill: #ffd65a;
+  stroke: rgba(20, 26, 45, 0.75);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+
+.sun-path__glow {
+  fill: rgba(255, 190, 40, 0.35);
+}
+
+.sun-path__sun {
+  fill: #ffc21f;
+  stroke: #fff6cf;
+  stroke-width: 2.5;
+  filter: drop-shadow(0 1px 4px rgba(20, 26, 45, 0.55));
+}
+
+.sun-path__label {
   position: absolute;
-  top: -18px;
-  left: -18px;
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  background: radial-gradient(circle at 35% 35%, #fff6cf, #ffc21f 55%, #f08a00);
-  box-shadow:
-    0 0 0 6px rgba(255, 194, 31, 0.3),
-    0 0 28px 12px rgba(255, 176, 32, 0.5),
-    0 2px 8px rgba(20, 26, 45, 0.4);
-}
-
-/* Three parallel beams leaving the sun, fading with distance and drifting away from it. */
-.sun-indicator__rays {
-  --beam: rgba(255, 170, 12, 0.95);
-  position: absolute;
-  top: -15px;
-  left: 0;
-  width: 320px;
-  height: 30px;
-  transform-origin: 0 50%;
-  transform: rotate(var(--ray-angle, 0rad)) translateX(30px);
-  background: linear-gradient(
-    to bottom,
-    transparent 0 3px,
-    var(--beam) 3px 6px,
-    transparent 6px 13.5px,
-    var(--beam) 13.5px 16.5px,
-    transparent 16.5px 24px,
-    var(--beam) 24px 27px,
-    transparent 27px
-  );
-  filter: drop-shadow(0 0 1.5px rgba(90, 50, 0, 0.75));
-  -webkit-mask-image: linear-gradient(to right, #000, transparent),
-    repeating-linear-gradient(to right, #000 0 18px, transparent 18px 28px);
-  -webkit-mask-composite: source-in;
-  mask-image: linear-gradient(to right, #000, transparent),
-    repeating-linear-gradient(to right, #000 0 18px, transparent 18px 28px);
-  mask-composite: intersect;
-  animation: beam-drift 1.4s linear infinite;
-}
-
-.sun-indicator__label {
-  position: absolute;
-  top: 30px;
-  left: 0;
-  transform: translateX(-50%);
+  transform: translate(-50%, 0);
   padding: 5px 11px;
   border-radius: 999px;
   background: rgba(27, 34, 51, 0.9);
@@ -989,6 +1028,10 @@ p {
   font-weight: 600;
   white-space: nowrap;
   box-shadow: 0 4px 14px rgba(20, 26, 45, 0.35);
+}
+
+.sun-path__label.is-above {
+  transform: translate(-50%, -100%);
 }
 
 /* ---------- basemap switch ---------- */
@@ -1193,14 +1236,15 @@ p {
 
 /* ---------- motion ---------- */
 
-@keyframes beam-drift {
+@keyframes ray-flow {
   to {
-    -webkit-mask-position:
-      0 0,
-      28px 0;
-    mask-position:
-      0 0,
-      28px 0;
+    stroke-dashoffset: -11;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
   }
 }
 
