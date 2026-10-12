@@ -42,9 +42,13 @@ service, so it costs nothing to host.
 
 | Map | Satellite |
 | --- | --- |
-| ![Drawn basemap with sun direction indicator](docs/screenshots/map-omonia.jpg) | ![Satellite basemap with computed shadows](docs/screenshots/satellite-omonia.jpg) |
+| ![Drawn basemap with blue shade and the sun path](docs/screenshots/map-omonia.jpg) | ![Satellite basemap with blue shade and the sun path](docs/screenshots/satellite-omonia.jpg) |
 
-Omonia, Athens, same view and time in both basemaps.
+Omonia, Athens, same view and time (14:00) in both basemaps.
+
+![Sun-hours map on the satellite basemap](docs/screenshots/sun-hours-omonia.jpg)
+
+The same view with **Sun hours** on, for an 11:00 to 17:00 window.
 
 ## How it works
 
