@@ -139,6 +139,48 @@ export function shadowPieces(ring: Ring, offset: GroundOffset): Ring[] {
 /** Roughly 1 cm x 1 cm in square degrees: anything smaller is rounding noise. */
 const MIN_SWEPT_AREA_DEG2 = 1e-14
 
+/**
+ * The shade a building throws beyond its own footprint, as a few large shapes:
+ * one "ribbon" per run of consecutive leading walls, made of the run itself
+ * and its copy at the far end of the shadow.
+ *
+ * Together with the footprint these cover exactly the same ground as
+ * `shadowPieces`, but in two or three shapes per building instead of dozens of
+ * quads, which is what makes painting a whole view per slider step affordable.
+ * A ribbon may fold over itself; every part of it winds the same way (all its
+ * walls lead), so a non-zero fill still covers all of it.
+ */
+export function shadowRibbons(ring: Ring, offset: GroundOffset): Ring[] {
+  const n = ring.length - 1
+  if (n < 3) return []
+  const orientation = Math.sign(signedArea(ring))
+  const leading: boolean[] = []
+  for (let i = 0; i < n; i++) {
+    const a = ring[i]
+    const b = ring[i + 1]
+    const cross = (b[0] - a[0]) * offset.dLat - (b[1] - a[1]) * offset.dLon
+    leading.push(cross * orientation <= -MIN_SWEPT_AREA_DEG2)
+  }
+  // Start right after a wall that does not lead, so no run wraps around the ring's end.
+  const gap = leading.indexOf(false)
+  if (gap === -1) return [] // cannot happen for a closed ring, but be safe
+  const ribbons: Ring[] = []
+  let run: Position[] = []
+  for (let k = 1; k <= n; k++) {
+    const i = (gap + k) % n
+    if (leading[i]) {
+      if (run.length === 0) run.push(ring[i])
+      run.push(ring[(i + 1) % n])
+    }
+    if ((!leading[i] || k === n) && run.length > 0) {
+      const far = run.map((position) => shift(position, offset)).reverse()
+      ribbons.push([...run, ...far, run[0]])
+      run = []
+    }
+  }
+  return ribbons
+}
+
 // About 1 cm. Short coordinates keep the GeoJSON handed to the map small.
 const round7 = (value: number) => Math.round(value * 1e7) / 1e7
 
@@ -164,22 +206,6 @@ export function buildShadowPolygon(
     // Degenerate footprints can trip the clipper; an over-estimate beats a crash.
     return hull()
   }
-}
-
-/**
- * Cheap shadow geometry for drawing a whole viewport: the un-merged pieces as
- * one MultiPolygon (or the hull, for convex footprints). The map layer flattens
- * overlaps, so no union is needed.
- */
-export function shadowRenderGeometry(
-  building: Pick<Building, 'ring' | 'convex'>,
-  offset: GroundOffset,
-): Polygon | MultiPolygon {
-  if (building.convex) {
-    const far = building.ring.map((position) => shift(position, offset))
-    return { type: 'Polygon', coordinates: [convexHull([...building.ring, ...far])] }
-  }
-  return { type: 'MultiPolygon', coordinates: shadowPieces(building.ring, offset).map((ring) => [ring]) }
 }
 
 function ringBBox(ring: Ring): BBox {

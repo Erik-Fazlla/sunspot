@@ -5,6 +5,8 @@ import {
   esriImageryTileUrl,
   IMAGERY_DEFAULT_OPACITY,
   IMAGERY_MIN_OPACITY,
+  IMAGERY_MUTED,
+  imageryTone,
 } from './imagery'
 
 describe('esriImageryTileUrl', () => {
@@ -52,5 +54,25 @@ describe('ESRI_ATTRIBUTION', () => {
     expect(ESRI_ATTRIBUTION).toContain('Powered by')
     expect(ESRI_ATTRIBUTION).toContain('Esri')
     expect(ESRI_ATTRIBUTION).toContain('Maxar')
+  })
+})
+
+describe('imageryTone', () => {
+  it('mutes the photo fully at the default strength and below', () => {
+    expect(imageryTone(IMAGERY_DEFAULT_OPACITY)).toEqual({ ...IMAGERY_MUTED })
+    expect(imageryTone(0.5)).toEqual({ ...IMAGERY_MUTED })
+  })
+
+  it('leaves the photo untouched at full strength', () => {
+    const tone = imageryTone(1)
+    expect(tone.saturation).toBeCloseTo(0)
+    expect(tone.contrast).toBeCloseTo(0)
+    expect(tone.brightnessMin).toBeCloseTo(0)
+  })
+
+  it('eases between the two', () => {
+    const tone = imageryTone(0.925)
+    expect(tone.saturation).toBeCloseTo(IMAGERY_MUTED.saturation / 2)
+    expect(tone.brightnessMin).toBeCloseTo(IMAGERY_MUTED.brightnessMin / 2)
   })
 })

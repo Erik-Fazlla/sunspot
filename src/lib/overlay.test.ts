@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  SHADOW_MAX_OPACITY,
-  SHADOW_MIN_SHARE,
-  shadowOpacity,
+  SHADE_OPACITY,
   SUNLIGHT_MAX_OPACITY,
   SUNLIGHT_MIN_OPACITY,
   sunlightOpacity,
@@ -49,14 +47,10 @@ describe('sunlightOpacity', () => {
   })
 })
 
-describe('shadowOpacity', () => {
-  it('is full strength under a clear sky and a quarter of it under full cloud', () => {
-    expect(shadowOpacity(1)).toBeCloseTo(SHADOW_MAX_OPACITY)
-    expect(shadowOpacity(0)).toBeCloseTo(SHADOW_MAX_OPACITY * SHADOW_MIN_SHARE)
-  })
-
-  it('clamps out-of-range input', () => {
-    expect(shadowOpacity(3)).toBeCloseTo(SHADOW_MAX_OPACITY)
-    expect(shadowOpacity(-3)).toBeCloseTo(SHADOW_MAX_OPACITY * SHADOW_MIN_SHARE)
+describe('SHADE_OPACITY', () => {
+  it('is a fixed, clearly visible value per basemap, stronger over a photo', () => {
+    expect(SHADE_OPACITY.map).toBeGreaterThanOrEqual(0.4)
+    expect(SHADE_OPACITY.satellite).toBeGreaterThan(SHADE_OPACITY.map)
+    expect(SHADE_OPACITY.satellite).toBeLessThan(0.8)
   })
 })

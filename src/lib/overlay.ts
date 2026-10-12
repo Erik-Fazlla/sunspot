@@ -8,10 +8,13 @@ export const SUNLIGHT_MIN_OPACITY = 0.12
 /** Overlay opacity under a clear sky (sunFactor 1). */
 export const SUNLIGHT_MAX_OPACITY = 0.35
 
-/** Shadow darkness under a clear sky. */
-export const SHADOW_MAX_OPACITY = 0.42
-/** Share of that darkness kept under full cloud, so the geometry stays readable. */
-export const SHADOW_MIN_SHARE = 0.25
+/**
+ * Opacity of the shade layer on each basemap. It is constant: where shade
+ * falls is geometry, and must stay readable whatever the forecast says. How
+ * strong the sun is shows in the weather panel and the sun label instead.
+ * Over a photo it is stronger, to stand out from the picture.
+ */
+export const SHADE_OPACITY = { map: 0.46, satellite: 0.62 } as const
 
 const clamp01 = (value: number) => Math.min(1, Math.max(0, Number.isFinite(value) ? value : 0))
 
@@ -27,9 +30,4 @@ const clamp01 = (value: number) => Math.min(1, Math.max(0, Number.isFinite(value
 export function sunlightOpacity(sunFactor: number, sunUp: boolean): number {
   if (!sunUp) return 0
   return SUNLIGHT_MIN_OPACITY + (SUNLIGHT_MAX_OPACITY - SUNLIGHT_MIN_OPACITY) * clamp01(sunFactor)
-}
-
-/** Opacity of the shadow layer: full strength under a clear sky, a quarter of it under full cloud. */
-export function shadowOpacity(sunFactor: number): number {
-  return SHADOW_MAX_OPACITY * (SHADOW_MIN_SHARE + (1 - SHADOW_MIN_SHARE) * clamp01(sunFactor))
 }

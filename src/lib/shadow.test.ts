@@ -14,6 +14,7 @@ import {
   metersToDegrees,
   shadowOffset,
   shadowPieces,
+  shadowRibbons,
   shadowSweep,
   type Ring,
 } from './shadow'
@@ -225,5 +226,64 @@ describe('shadowSweep', () => {
 
   it('casts nothing when the sun is down', () => {
     expect(shadowSweep(makeBuilding(SQUARE, 10), { altitudeRad: -0.1, bearingDeg: 180 }, ORIGIN.lat)).toBeNull()
+  })
+})
+
+describe('shadowRibbons', () => {
+  /** Winding number of a ring around a point: non-zero means inside under the non-zero fill rule. */
+  function winding(point: Position, ring: Ring): number {
+    let count = 0
+    for (let i = 0; i < ring.length - 1; i++) {
+      const [x1, y1] = ring[i]
+      const [x2, y2] = ring[i + 1]
+      const side = (x2 - x1) * (point[1] - y1) - (point[0] - x1) * (y2 - y1)
+      if (y1 <= point[1] && y2 > point[1] && side > 0) count++
+      else if (y1 > point[1] && y2 <= point[1] && side < 0) count--
+    }
+    return count
+  }
+
+  it('gives one ribbon per run of consecutive leading walls', () => {
+    const north = shadowOffset(10, SUN_SOUTH_45, ORIGIN.lat)!
+    expect(shadowRibbons(SQUARE, north)).toHaveLength(1)
+    expect(shadowRibbons([...SQUARE].reverse(), north)).toHaveLength(1)
+    // Sun in the west: the east wall and the notch wall lead, with a north-facing wall between them.
+    const east = shadowOffset(10, { altitudeRad: rad(45), bearingDeg: 270 }, ORIGIN.lat)!
+    expect(shadowRibbons(L_SHAPE, east)).toHaveLength(2)
+    // A diagonal sun makes neighbouring walls lead together: fewer ribbons than leading walls.
+    const diagonal = shadowOffset(10, { altitudeRad: rad(45), bearingDeg: 225 }, ORIGIN.lat)!
+    expect(shadowRibbons(L_SHAPE, diagonal).length).toBeLessThan(shadowPieces(L_SHAPE, diagonal).length - 1)
+  })
+
+  it('closes every ribbon and runs it along the wall and back along the far edge', () => {
+    const offset = shadowOffset(10, SUN_SOUTH_45, ORIGIN.lat)!
+    const [ribbon] = shadowRibbons(SQUARE, offset)
+    expect(ribbon[0]).toEqual(ribbon[ribbon.length - 1])
+    expect(ribbon).toHaveLength(5) // one wall: two near points, two far points, closed
+  })
+
+  it('covers, with the footprint, exactly the same ground as the shadow polygon', () => {
+    const suns = [
+      SUN_SOUTH_45,
+      SUN_EAST_45,
+      { altitudeRad: rad(20), bearingDeg: 250 },
+      { altitudeRad: rad(35), bearingDeg: 225 },
+      { altitudeRad: rad(60), bearingDeg: 100 },
+    ]
+    for (const ring of [L_SHAPE, [...L_SHAPE].reverse(), SQUARE]) {
+      const building = makeBuilding(ring, 15)
+      for (const sun of suns) {
+        const offset = shadowOffset(building.height, sun, ORIGIN.lat)!
+        const shadow = buildShadowPolygon(building, offset)
+        const ribbons = shadowRibbons(ring, offset)
+        for (let east = -50; east <= 70; east += 3.7) {
+          for (let north = -50; north <= 70; north += 3.7) {
+            const point = at(east, north)
+            const painted = winding(point, ring) !== 0 || ribbons.some((ribbon) => winding(point, ribbon) !== 0)
+            expect(painted, `${east},${north}`).toBe(booleanPointInPolygon(point, shadow))
+          }
+        }
+      }
+    }
   })
 })
