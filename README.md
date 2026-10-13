@@ -341,6 +341,8 @@ Then open the URL Vite prints (http://localhost:5173 by default).
 | `npm run test:watch` | Run the tests in watch mode |
 | `npm run typecheck` | Type-check only |
 | `npm run lint` | Lint with oxlint |
+| `npm run build:android` | Build the web app for the APK and copy it into `android/` |
+| `npm run icons` | Redraw the app icon and regenerate every Android icon and splash size |
 
 The tests cover the azimuth conversion, shadow length and direction, shadow
 polygons, the point-in-shade test, the weather label rules, sunFactor and the
@@ -364,6 +366,80 @@ custom domain or a user page served from `/`, remove the `BASE_PATH` line.
 
 GitHub Pages is free for public repositories. For a private repository it needs
 a paid GitHub plan.
+
+## Android app
+
+The Android app is the same web build packed into an APK with
+[Capacitor](https://capacitorjs.com): the files of `dist/` travel inside the
+APK and are shown in a full-screen WebView. There is no second codebase. The
+native project lives in `android/`, and `capacitor.config.ts` names the app
+(`io.github.erikfazlla.sunspot`).
+
+**What works without a connection:** the app itself opens, because its code is
+inside the APK. The map, the buildings, the weather, the search and the
+satellite photo still come from the internet, so without a connection the map
+is empty. Saving places for offline use is not built yet.
+
+**Icon.** `scripts/make-app-icons.mjs` draws the icon (a sun, a building seen
+from above and its blue shade) and `npm run icons` regenerates every Android
+size from it.
+
+### Building it on your machine
+
+You need the Android SDK and a full **JDK 21** (the JDK must include `jlink`;
+a bare Java runtime is not enough).
+
+```bash
+npm run build:android
+cd android
+./gradlew assembleDebug
+```
+
+The APK appears in `android/app/build/outputs/apk/debug/`. `build:android`
+builds with `--base=./`, because inside the APK the files sit next to
+`index.html` rather than under `/sunspot/`.
+
+### Building it on GitHub
+
+`.github/workflows/android.yml` builds the APK on GitHub's machines:
+
+- **Run it by hand** from the **Actions** tab to get the APK as a downloadable
+  workflow artifact.
+- **Push a tag** such as `v1.0.0` to also publish the APK on a GitHub Release.
+
+### Signing, and why it matters
+
+Android installs an update over an existing copy only if both were signed with
+the same key and the new one has a higher version code (the workflow uses its
+run number, which always rises).
+
+- **Without a signing key** the workflow builds a *debug* APK. GitHub signs it
+  with a throwaway key that changes on every run, so a newer debug APK cannot
+  be installed over an older one: uninstall first.
+- **With a signing key** it builds a proper release APK that updates in place.
+  Create one keystore, keep a backup somewhere safe, and add four repository
+  secrets under **Settings > Secrets and variables > Actions**:
+
+  | Secret | Value |
+  | --- | --- |
+  | `ANDROID_KEYSTORE_BASE64` | The keystore file, base64-encoded |
+  | `ANDROID_KEYSTORE_PASSWORD` | The keystore password |
+  | `ANDROID_KEY_ALIAS` | The key's alias |
+  | `ANDROID_KEY_PASSWORD` | The key's password |
+
+  If the keystore is ever lost, updates can no longer be installed over the
+  app; everyone has to uninstall and install again.
+
+The keystore is never committed. Locally, `android/app/build.gradle` reads the
+same four values from the environment variables `SUNSPOT_KEYSTORE` (a file
+path), `SUNSPOT_KEYSTORE_PASSWORD`, `SUNSPOT_KEY_ALIAS` and
+`SUNSPOT_KEY_PASSWORD`.
+
+### Installing it
+
+Copy the APK to the phone and open it. Android asks once to allow installing
+from that source (the browser or the file manager). The app asks for location
+the first time it opens, to centre the map; it works without it.
 
 ## Known limitations
 
