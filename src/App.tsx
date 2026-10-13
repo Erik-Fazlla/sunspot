@@ -25,8 +25,10 @@ import { clampImageryOpacity, IMAGERY_DEFAULT_OPACITY } from './lib/imagery'
 import { currentPosition, LOCATION_MESSAGES, LocationError } from './lib/location'
 import {
   isStartPlace,
+  readLastPosition,
   readStartChoice,
   startChoiceLabel,
+  writeLastPosition,
   writeStartChoice,
   type StartChoice,
 } from './lib/startPlace'
@@ -41,7 +43,12 @@ export default function App() {
   // Where the map opens: the user's own choice, asked for on the first visit.
   const [start, setStart] = useState<StartChoice | null>(readStartChoice)
   const [askStart, setAskStart] = useState(start === null)
-  const [place, setPlace] = useState<Place>(start?.mode === 'place' ? start.place : FALLBACK_PLACE)
+  const [place, setPlace] = useState<Place>(() => {
+    if (start?.mode === 'place') return start.place
+    // "Where I am": open where the user was last found; the lookup then moves the map.
+    const last = start?.mode === 'gps' ? readLastPosition() : null
+    return last ? { ...last, label: 'My location' } : FALLBACK_PLACE
+  })
   const [geo, setGeo] = useState<GeoState>({ status: 'idle' })
   // null means "the default date": tomorrow, wherever the selected place is.
   const [pickedDate, setPickedDate] = useState<string | null>(null)
@@ -75,11 +82,14 @@ export default function App() {
     currentPosition().then(
       ({ lat, lon }) => {
         setPlace({ lat, lon, label: 'My location' })
+        writeLastPosition({ lat, lon })
         setGeo({ status: 'idle' })
       },
       (error: unknown) => {
         const message = error instanceof LocationError ? error.message : LOCATION_MESSAGES.unavailable
-        setGeo({ status: 'error', message })
+        // The device's own wording tells a timeout from a missing service.
+        const detail = error instanceof LocationError && error.reason === 'unavailable' ? error.detail : null
+        setGeo({ status: 'error', message: detail ? `${message} (${detail})` : message })
       },
     )
   }, [])

@@ -17,14 +17,19 @@ export const LOCATION_MESSAGES: Record<LocationFailure, string> = {
 
 export class LocationError extends Error {
   readonly reason: LocationFailure
-  constructor(reason: LocationFailure) {
+  /** What the device itself reported, for telling one failure from another. */
+  readonly detail: string | null
+  constructor(reason: LocationFailure, detail: string | null = null) {
     super(LOCATION_MESSAGES[reason])
     this.reason = reason
+    this.detail = detail
   }
 }
 
 /** A phone may need a while for its first fix, more so indoors. */
 const TIMEOUT_MS = 20_000
+/** How long the quick, network-based attempt gets before GPS is tried. */
+const QUICK_TIMEOUT_MS = 8_000
 /** A position this recent is good enough to centre a map on. */
 const MAX_AGE_MS = 10 * 60 * 1000
 
@@ -33,10 +38,16 @@ export interface Position {
   lon: number
 }
 
+/** The text a failed location request came with, if any. */
+export function failureDetail(error: unknown): string | null {
+  const message = (error as { message?: unknown } | null)?.message
+  return typeof message === 'string' && message.trim() ? message.trim() : null
+}
+
 /** Turns whatever a location request failed with into one of the three reasons. */
 export function locationFailure(error: unknown): LocationFailure {
-  const details = error as { code?: unknown; message?: unknown } | null
-  const message = typeof details?.message === 'string' ? details.message : ''
+  const details = error as { code?: unknown } | null
+  const message = failureDetail(error) ?? ''
   if (/not enabled|disabled|switched off/i.test(message)) return 'switched-off'
   // Browsers report a denied permission as code 1.
   if (details?.code === 1 || /denied|permission/i.test(message)) return 'denied'
@@ -47,12 +58,18 @@ async function nativePosition(): Promise<Position> {
   // Asks Android for the permission if it has not been answered yet.
   const permission = await Geolocation.requestPermissions()
   if (permission.location !== 'granted' && permission.coarseLocation !== 'granted') throw new LocationError('denied')
-  const { coords } = await Geolocation.getCurrentPosition({
-    enableHighAccuracy: false,
-    timeout: TIMEOUT_MS,
-    maximumAge: MAX_AGE_MS,
-  })
-  return { lat: coords.latitude, lon: coords.longitude }
+  const attempt = (enableHighAccuracy: boolean, timeout: number) =>
+    Geolocation.getCurrentPosition({ enableHighAccuracy, timeout, maximumAge: MAX_AGE_MS })
+  try {
+    // Wi-Fi and mobile masts first: quick, and precise enough to centre a map.
+    const { coords } = await attempt(false, QUICK_TIMEOUT_MS)
+    return { lat: coords.latitude, lon: coords.longitude }
+  } catch (error) {
+    if (locationFailure(error) !== 'unavailable') throw error
+    // Some phones have that switched off and only answer through GPS.
+    const { coords } = await attempt(true, TIMEOUT_MS)
+    return { lat: coords.latitude, lon: coords.longitude }
+  }
 }
 
 function browserPosition(): Promise<Position> {
@@ -74,6 +91,6 @@ export async function currentPosition(): Promise<Position> {
   try {
     return await (Capacitor.isNativePlatform() ? nativePosition() : browserPosition())
   } catch (error) {
-    throw error instanceof LocationError ? error : new LocationError(locationFailure(error))
+    throw error instanceof LocationError ? error : new LocationError(locationFailure(error), failureDetail(error))
   }
 }
