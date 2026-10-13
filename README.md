@@ -323,6 +323,46 @@ UTC instants only for the sun calculations (`src/lib/time.ts`).
 Forecast responses are cached in memory per (latitude, longitude, date), with
 coordinates rounded to 0.01 degrees. The cache lasts until the page reloads.
 
+### Saved places and offline use
+
+**Save this place for offline** (under "Where") keeps everything needed for
+the area about 1.2 km around the middle of the map on the device:
+
+- the **map tiles** covering it at every zoom (they carry the buildings, so
+  shade, the sun path and sun hours all work, for any date and time);
+- the map's **style, icons and fonts** (Latin, Greek and punctuation);
+- the **forecast** for today and the next six days.
+
+A saved place is about 3 to 6 MB in a city. Saved places are listed under the
+button; tapping one opens it, and removing one deletes its files except those
+another saved place still needs.
+
+How it works (`src/lib/mapCache.ts`, `src/lib/offlineArea.ts`,
+`src/lib/savedPlaces.ts`): every request to the map's tile server is rewritten
+to a custom `ofm://` address and answered by a MapLibre protocol handler that
+looks in the browser's Cache Storage first.
+
+| File | Order |
+| --- | --- |
+| Map tiles, fonts, icons | Device first, then the network |
+| Style and tile index | Network first (so a new map release is noticed), device if the network does not answer within 2.5 s |
+
+There are two stores: **saved** (files of saved places, only removed with the
+place) and **recent** (whatever the map loaded lately, the oldest dropped
+beyond 600 files). Tiles are stored without the release date that is part of
+their address, so a place saved under one map release is still found after the
+server moves to the next. The **recent** store is also why the map opens faster
+the second time: an area you have looked at is drawn from the device.
+
+Forecasts are kept as they are fetched. When the network does not answer, the
+kept copy is used and the weather panel says when it was saved.
+
+Not available offline: areas that were not saved, the search, the satellite
+photo (Esri's terms do not allow storing it), terrain, and labels in scripts
+other than Latin and Greek. A saved forecast only covers the seven days from
+the day it was saved. Storage belongs to the browser or the app: clearing site
+data, or uninstalling the app, removes saved places.
+
 ## Setup
 
 Requires Node.js 20 or newer.
@@ -380,9 +420,9 @@ native project lives in `android/`, and `capacitor.config.ts` names the app
 (`io.github.erikfazlla.sunspot`).
 
 **What works without a connection:** the app itself opens, because its code is
-inside the APK. The map, the buildings, the weather, the search and the
-satellite photo still come from the internet, so without a connection the map
-is empty. Saving places for offline use is not built yet.
+inside the APK, and so does every place saved with "Save this place for
+offline" (see "Saved places and offline use" above). Unsaved areas, the search
+and the satellite photo need a connection.
 
 **Icon.** `scripts/make-app-icons.mjs` draws the icon (a sun, a building seen
 from above and its blue shade) and `npm run icons` regenerates every Android

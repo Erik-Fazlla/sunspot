@@ -1,3 +1,4 @@
+import { recallJson, rememberJson } from './mapCache'
 import type { HourWeather } from './weatherLabel'
 
 const FORECAST_URL = 'https://api.open-meteo.com/v1/forecast'
@@ -15,10 +16,14 @@ export interface Forecast {
   timezone: string
   /** The 24 hours of the requested date, in that timezone. */
   hours: HourWeather[]
+  /** Set when this is a copy kept on the device because the network did not answer: when it was fetched. */
+  savedAt?: string
 }
 
 export interface ForecastResponse {
   timezone: string
+  /** Added here, not by Open-Meteo: see `Forecast.savedAt`. */
+  savedAt?: string
   hourly?: { time: string[] } & Record<(typeof HOURLY_VARIABLES)[number], (number | null)[] | undefined>
   error?: boolean
   reason?: string
@@ -38,11 +43,21 @@ export function forecastCacheKey(lat: number, lon: number, date: string): string
 }
 
 async function request(params: Record<string, string>): Promise<ForecastResponse> {
-  const response = await fetch(`${FORECAST_URL}?${new URLSearchParams(params)}`)
+  const url = `${FORECAST_URL}?${new URLSearchParams(params)}`
+  let response: Response
+  try {
+    response = await fetch(url)
+  } catch (error) {
+    // No connection: an answer kept on the device from an earlier time will do.
+    const kept = await recallJson<ForecastResponse>(url)
+    if (kept) return { ...kept.data, savedAt: kept.savedAt }
+    throw error
+  }
   const data = (await response.json().catch(() => null)) as ForecastResponse | null
   if (!response.ok || !data || data.error) {
     throw new Error(data?.reason ?? `Open-Meteo request failed (${response.status})`)
   }
+  void rememberJson(url, data)
   return data
 }
 
@@ -67,6 +82,7 @@ export function parseHourly(data: ForecastResponse): Forecast {
   if (!hourly?.time?.length) throw new Error('Open-Meteo returned no hourly data for this date')
   return {
     timezone: data.timezone,
+    ...(data.savedAt ? { savedAt: data.savedAt } : {}),
     hours: hourly.time.map((time, i) => ({
       time,
       cloudCover: hourly.cloud_cover?.[i] ?? null,
@@ -94,8 +110,14 @@ export function fetchForecast(lat: number, lon: number, date: string): Promise<F
     end_date: date,
   }).then(parseHourly)
   forecastCache.set(key, pending)
-  // A failed request must not poison the cache: let the next call retry.
-  pending.catch(() => forecastCache.delete(key))
+  // A failed request must not poison the cache: let the next call retry. Nor
+  // must an old copy from the device: the next call should try the network again.
+  pending.then(
+    (forecast) => {
+      if (forecast.savedAt) forecastCache.delete(key)
+    },
+    () => forecastCache.delete(key),
+  )
   return pending
 }
 

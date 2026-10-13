@@ -964,6 +964,131 @@ p {
   font-weight: 600;
 }
 
+/* ---------- saved places ---------- */
+
+.saved {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(27, 34, 51, 0.1);
+}
+
+.saved__save {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 42px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--ink);
+  color: #fff;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  transition:
+    transform 0.2s var(--ease),
+    opacity 0.2s ease;
+}
+
+.saved__save:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.saved__save:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.saved__save svg {
+  flex: none;
+  color: #ffc21f;
+}
+
+.saved__bar {
+  height: 4px;
+  margin-top: 8px;
+  border-radius: 999px;
+  background: rgba(27, 34, 51, 0.1);
+  overflow: hidden;
+}
+
+.saved__bar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(to right, var(--sun), var(--sun-deep));
+  transition: width 0.25s ease;
+}
+
+.saved__hint {
+  margin: 8px 2px 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--ink-soft);
+}
+
+.saved .note {
+  margin-top: 8px;
+}
+
+.saved__list {
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+
+.saved__list li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 12px;
+  background: rgba(27, 34, 51, 0.05);
+}
+
+.saved__list li.is-here {
+  background: var(--sun-wash);
+}
+
+.saved__open {
+  flex: 1;
+  min-width: 0;
+  padding: 9px 4px 9px 12px;
+  border: 0;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  color: var(--ink);
+}
+
+.saved__open span {
+  display: block;
+  font-weight: 600;
+  font-size: 13.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.saved__open small {
+  display: block;
+  margin-top: 1px;
+  font-size: 11.5px;
+  color: var(--ink-soft);
+}
+
+.saved__remove {
+  flex: none;
+  margin-right: 4px;
+}
+
+.weather__saved {
+  margin: 0 0 10px;
+}
+
 .start {
   position: absolute;
   inset: 0;

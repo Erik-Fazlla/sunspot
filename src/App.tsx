@@ -8,7 +8,9 @@ import { SunArc } from './components/SunArc'
 import { TimeControls } from './components/TimeControls'
 import { TimeSlider } from './components/TimeSlider'
 import { WeatherPanel } from './components/WeatherPanel'
+import { SavedPlaces } from './components/SavedPlaces'
 import { useForecast, useTimezone } from './hooks/useForecast'
+import { useOnline } from './hooks/useOnline'
 import { useStoredBoolean, useStoredChoice, useStoredNumber } from './hooks/useStoredBoolean'
 import {
   DEFAULT_DATE_OFFSET_DAYS,
@@ -23,6 +25,15 @@ import {
 import { analyzePoint } from './lib/analysis'
 import { clampImageryOpacity, IMAGERY_DEFAULT_OPACITY } from './lib/imagery'
 import { currentPosition, LOCATION_MESSAGES, LocationError } from './lib/location'
+import {
+  forgetPlaceOffline,
+  readSavedPlaces,
+  SAVED_FORECAST_DAYS,
+  savePlaceOffline,
+  withSavedPlace,
+  writeSavedPlaces,
+  type SavedPlace,
+} from './lib/savedPlaces'
 import {
   isStartPlace,
   readLastPosition,
@@ -57,6 +68,13 @@ export default function App() {
   const [sliderMin, setSliderMin] = useState(DEFAULT_START_MIN)
   const [playing, setPlaying] = useState(false)
   const [point, setPoint] = useState<LngLat | null>(null)
+  // Places kept on the device for use without a connection.
+  const [saved, setSaved] = useState<SavedPlace[]>(readSavedPlaces)
+  const [saving, setSaving] = useState<{ done: number; total: number } | null>(null)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  // The middle of the map, which the user may have dragged away from `place`.
+  const [viewCentre, setViewCentre] = useState<LngLat | null>(null)
+  const online = useOnline()
   const [buildings, setBuildings] = useState<Building[]>([])
   const [panelOpen, setPanelOpen] = useState(true)
   const [showSunHours, setShowSunHours] = useStoredBoolean('sunspot:sun-hours', false)
@@ -108,6 +126,57 @@ export default function App() {
     setAskStart(false)
     if (choice.mode === 'gps') locate()
     else setPlace(choice.place)
+  }
+
+  const onViewChange = useCallback((centre: LngLat) => {
+    // The map reports after every tile load too; only a real move is news.
+    setViewCentre((previous) =>
+      previous && Math.abs(previous.lat - centre.lat) < 1e-5 && Math.abs(previous.lon - centre.lon) < 1e-5
+        ? previous
+        : centre,
+    )
+  }, [])
+
+  // A save covers what is on the map, which is not always the searched place.
+  const saveCentre = viewCentre ?? place
+  const saveHere = () => {
+    const awayFromPlace =
+      Math.abs(saveCentre.lat - place.lat) > 0.006 || Math.abs(saveCentre.lon - place.lon) > 0.008
+    const label = awayFromPlace
+      ? `${saveCentre.lat.toFixed(4)}, ${saveCentre.lon.toFixed(4)}`
+      : place.label === 'My location'
+        ? 'My saved spot'
+        : place.label
+    const dates = Array.from({ length: SAVED_FORECAST_DAYS }, (_, day) => addDays(today, day))
+    setSaveError(null)
+    setSaving({ done: 0, total: 1 })
+    savePlaceOffline({ lat: saveCentre.lat, lon: saveCentre.lon, label, timezone }, dates, (done, total) =>
+      setSaving({ done, total }),
+    )
+      .then((record) => {
+        setSaved((list) => {
+          const next = withSavedPlace(list, record)
+          writeSavedPlaces(next)
+          return next
+        })
+      })
+      .catch((error: unknown) => {
+        const reason = error instanceof Error ? error.message : 'unknown error'
+        setSaveError(`Could not save this place (${reason}). Check the connection and try again.`)
+      })
+      .finally(() => setSaving(null))
+  }
+
+  const removeSaved = (removed: SavedPlace) => {
+    const remaining = saved.filter((other) => other.id !== removed.id)
+    setSaved(remaining)
+    writeSavedPlaces(remaining)
+    void forgetPlaceOffline(removed, remaining)
+  }
+
+  const openSaved = (target: SavedPlace) => {
+    setPoint(null)
+    setPlace({ lat: target.lat, lon: target.lon, label: target.label, timezone: target.timezone })
   }
 
   const windowValid = endMin > startMin
@@ -186,6 +255,7 @@ export default function App() {
           setPanelOpen(true)
         }}
         onBuildingsChange={setBuildings}
+        onViewChange={onViewChange}
       />
 
       <aside className={`panel${panelOpen ? '' : ' is-collapsed'}`} aria-label="Sunlight planner">
@@ -280,6 +350,16 @@ export default function App() {
                   Change
                 </button>
               </p>
+              <SavedPlaces
+                saved={saved}
+                centre={saveCentre}
+                saving={saving}
+                error={saveError}
+                online={online}
+                onSave={saveHere}
+                onOpen={openSaved}
+                onRemove={removeSaved}
+              />
             </section>
 
             <section className="section">

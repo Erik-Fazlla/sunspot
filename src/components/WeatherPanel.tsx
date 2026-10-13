@@ -39,6 +39,18 @@ export function WeatherPanel({ state, currentMin, sunFactor }: Props) {
 
   return (
     <div className="weather">
+      {state.forecast.savedAt && (
+        <p className="note note--warn weather__saved">
+          No connection. This is the forecast saved on{' '}
+          {new Date(state.forecast.savedAt).toLocaleString(undefined, {
+            day: 'numeric',
+            month: 'short',
+            hour: '2-digit',
+            minute: '2-digit',
+          })}
+          .
+        </p>
+      )}
       <div className="weather__head">
         <span className={`chip chip--${labelSlug(label)}`}>{label}</span>
         <span className="weather__temp">{value(hour.temperature, '°C')}</span>
