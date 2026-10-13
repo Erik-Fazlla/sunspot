@@ -947,6 +947,123 @@ p {
   font-weight: 500;
 }
 
+/* ---------- start place ---------- */
+
+.start-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  margin: 10px 2px 0;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+}
+
+.start-line strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.start {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  justify-content: center;
+  /* Near the top, so the keyboard does not cover the search field on a phone. */
+  align-items: flex-start;
+  padding: max(9vh, 20px) 16px 16px;
+  background: rgba(20, 26, 45, 0.5);
+  backdrop-filter: blur(3px);
+  animation: fade-in 0.3s ease;
+  overflow-y: auto;
+}
+
+.start__card {
+  width: min(420px, 100%);
+  padding: 24px 22px 18px;
+  border-radius: var(--radius);
+  background: var(--paper-solid);
+  box-shadow: var(--elevation);
+  animation: rise 0.45s var(--ease);
+}
+
+.start__mark {
+  display: block;
+  margin-bottom: 14px;
+}
+
+.start__card h2 {
+  margin: 0 0 6px;
+  font-size: 21px;
+  line-height: 1.2;
+}
+
+.start__lead {
+  margin: 0 0 18px;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--ink-soft);
+}
+
+.start__option {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 14px 16px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--ink);
+  color: #fff;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    transform 0.2s var(--ease),
+    box-shadow 0.2s ease;
+}
+
+.start__option:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 22px rgba(20, 26, 45, 0.28);
+}
+
+.start__option:active {
+  transform: translateY(0);
+}
+
+.start__option svg {
+  flex: none;
+  color: #ffc21f;
+}
+
+.start__option strong {
+  display: block;
+  font-size: 15px;
+}
+
+.start__option small {
+  display: block;
+  margin-top: 2px;
+  font-size: 12.5px;
+  opacity: 0.75;
+}
+
+.start__or {
+  margin: 18px 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.start__skip {
+  display: block;
+  margin: 16px auto 0;
+  font-size: 13px;
+}
+
 /* ---------- sun path ---------- */
 
 .sun-path {

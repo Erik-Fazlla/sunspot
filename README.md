@@ -26,6 +26,10 @@ service, so it costs nothing to host.
   cloud cuts the sun to 28% of clear-sky strength, so the light is mostly
   diffuse: only about 11 min of direct sun."
 - Sunrise, sunset and the sun's height through the day.
+- A **start place**. The first time it opens, the app asks where the map should
+  open from then on: wherever you are, or one place you pick. The answer is
+  kept on the device (`sunspot:start` in `localStorage`) and can be changed
+  under "Where".
 - A **Map / Satellite** switch. Map is a quiet drawn basemap with no shop or
   restaurant icons. Satellite puts a real aerial photo under the computed
   shadows, with an opacity slider so the shadows stay readable.
@@ -438,8 +442,12 @@ path), `SUNSPOT_KEYSTORE_PASSWORD`, `SUNSPOT_KEY_ALIAS` and
 ### Installing it
 
 Copy the APK to the phone and open it. Android asks once to allow installing
-from that source (the browser or the file manager). The app asks for location
-the first time it opens, to centre the map; it works without it.
+from that source (the browser or the file manager).
+
+Location in the app goes through the Capacitor geolocation plugin
+(`src/lib/location.ts`), which asks Android directly; the website uses the
+browser's own request. The app only asks for location when you choose "Where I
+am" as the start place or press the locate button, and it works without it.
 
 ## Known limitations
 
