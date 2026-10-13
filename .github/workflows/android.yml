@@ -5,6 +5,9 @@ name: Android APK
 on:
   push:
     tags: ['v*']
+    # Temporary: builds from this branch before it is merged, because a manual
+    # run needs the workflow file on main. Remove once merged.
+    branches: ['feat/android-apk']
   workflow_dispatch:
 
 permissions:
@@ -30,7 +33,9 @@ jobs:
         # Inside the APK the files sit next to index.html, so paths are relative.
         run: npx tsc -b && npx vite build --base=./
         env:
-          VITE_ESRI_KEY: ${{ secrets.VITE_ESRI_KEY }}
+          # Not the website's key: inside the APK the page's address is
+          # https://localhost, so a key restricted to the website would be refused.
+          VITE_ESRI_KEY: ${{ secrets.VITE_ESRI_KEY_ANDROID }}
       - run: npx cap sync android
 
       - name: Version
