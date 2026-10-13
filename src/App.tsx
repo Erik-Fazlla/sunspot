@@ -3,11 +3,14 @@ import { BasemapControl, LayerToggles } from './components/LayerToggles'
 import { MapView, type Basemap, type LngLat } from './components/MapView'
 import { ResultCard } from './components/ResultCard'
 import { SearchBox } from './components/SearchBox'
+import { StartPicker } from './components/StartPicker'
 import { SunArc } from './components/SunArc'
 import { TimeControls } from './components/TimeControls'
 import { TimeSlider } from './components/TimeSlider'
 import { WeatherPanel } from './components/WeatherPanel'
+import { SavedPlaces } from './components/SavedPlaces'
 import { useForecast, useTimezone } from './hooks/useForecast'
+import { useOnline } from './hooks/useOnline'
 import { useStoredBoolean, useStoredChoice, useStoredNumber } from './hooks/useStoredBoolean'
 import {
   DEFAULT_DATE_OFFSET_DAYS,
@@ -21,6 +24,25 @@ import {
 } from './lib/constants'
 import { analyzePoint } from './lib/analysis'
 import { clampImageryOpacity, IMAGERY_DEFAULT_OPACITY } from './lib/imagery'
+import { currentPosition, LOCATION_MESSAGES, LocationError } from './lib/location'
+import {
+  forgetPlaceOffline,
+  readSavedPlaces,
+  SAVED_FORECAST_DAYS,
+  savePlaceOffline,
+  withSavedPlace,
+  writeSavedPlaces,
+  type SavedPlace,
+} from './lib/savedPlaces'
+import {
+  isStartPlace,
+  readLastPosition,
+  readStartChoice,
+  startChoiceLabel,
+  writeLastPosition,
+  writeStartChoice,
+  type StartChoice,
+} from './lib/startPlace'
 import { hourSunFactor } from './lib/sunFactor'
 import type { Place } from './lib/geocode'
 import type { Building } from './lib/shadow'
@@ -29,7 +51,15 @@ import { addDays, diffDays, formatDateLabel, formatMinutes, todayInTz, zonedToUt
 type GeoState = { status: 'idle' } | { status: 'locating' } | { status: 'error'; message: string }
 
 export default function App() {
-  const [place, setPlace] = useState<Place>(FALLBACK_PLACE)
+  // Where the map opens: the user's own choice, asked for on the first visit.
+  const [start, setStart] = useState<StartChoice | null>(readStartChoice)
+  const [askStart, setAskStart] = useState(start === null)
+  const [place, setPlace] = useState<Place>(() => {
+    if (start?.mode === 'place') return start.place
+    // "Where I am": open where the user was last found; the lookup then moves the map.
+    const last = start?.mode === 'gps' ? readLastPosition() : null
+    return last ? { ...last, label: 'My location' } : FALLBACK_PLACE
+  })
   const [geo, setGeo] = useState<GeoState>({ status: 'idle' })
   // null means "the default date": tomorrow, wherever the selected place is.
   const [pickedDate, setPickedDate] = useState<string | null>(null)
@@ -38,6 +68,13 @@ export default function App() {
   const [sliderMin, setSliderMin] = useState(DEFAULT_START_MIN)
   const [playing, setPlaying] = useState(false)
   const [point, setPoint] = useState<LngLat | null>(null)
+  // Places kept on the device for use without a connection.
+  const [saved, setSaved] = useState<SavedPlace[]>(readSavedPlaces)
+  const [saving, setSaving] = useState<{ done: number; total: number } | null>(null)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  // The middle of the map, which the user may have dragged away from `place`.
+  const [viewCentre, setViewCentre] = useState<LngLat | null>(null)
+  const online = useOnline()
   const [buildings, setBuildings] = useState<Building[]>([])
   const [panelOpen, setPanelOpen] = useState(true)
   const [showSunHours, setShowSunHours] = useStoredBoolean('sunspot:sun-hours', false)
@@ -59,35 +96,88 @@ export default function App() {
   const forecast = useForecast(target.lat, target.lon, date, inForecastRange)
 
   const locate = useCallback(() => {
-    if (!('geolocation' in navigator)) {
-      setGeo({ status: 'error', message: 'This browser cannot share your location.' })
-      return
-    }
     setGeo({ status: 'locating' })
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        setPlace({
-          lat: position.coords.latitude,
-          lon: position.coords.longitude,
-          label: 'My location',
-        })
+    currentPosition().then(
+      ({ lat, lon }) => {
+        setPlace({ lat, lon, label: 'My location' })
+        writeLastPosition({ lat, lon })
         setGeo({ status: 'idle' })
       },
-      (error) => {
-        const message =
-          error.code === error.PERMISSION_DENIED
-            ? 'Location permission was denied, so the map stays where it is.'
-            : 'Could not get your location. Search for a place instead.'
-        setGeo({ status: 'error', message })
+      (error: unknown) => {
+        const message = error instanceof LocationError ? error.message : LOCATION_MESSAGES.unavailable
+        // The device's own wording tells a timeout from a missing service.
+        const detail = error instanceof LocationError && error.reason === 'unavailable' ? error.detail : null
+        setGeo({ status: 'error', message: detail ? `${message} (${detail})` : message })
       },
-      { timeout: 8000, maximumAge: 10 * 60 * 1000 },
     )
   }, [])
 
-  // Centre on the user when the app opens; Athens stays as the fallback.
+  // Opening the app only looks for the user when that is what they chose. A
+  // fixed start place is already on the map, and a first visit asks first.
   useEffect(() => {
-    locate()
-  }, [locate])
+    if (start?.mode === 'gps') locate()
+    // Only when the app opens; later changes go through `chooseStart`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const chooseStart = (choice: StartChoice) => {
+    writeStartChoice(choice)
+    setStart(choice)
+    setAskStart(false)
+    if (choice.mode === 'gps') locate()
+    else setPlace(choice.place)
+  }
+
+  const onViewChange = useCallback((centre: LngLat) => {
+    // The map reports after every tile load too; only a real move is news.
+    setViewCentre((previous) =>
+      previous && Math.abs(previous.lat - centre.lat) < 1e-5 && Math.abs(previous.lon - centre.lon) < 1e-5
+        ? previous
+        : centre,
+    )
+  }, [])
+
+  // A save covers what is on the map, which is not always the searched place.
+  const saveCentre = viewCentre ?? place
+  const saveHere = () => {
+    const awayFromPlace =
+      Math.abs(saveCentre.lat - place.lat) > 0.006 || Math.abs(saveCentre.lon - place.lon) > 0.008
+    const label = awayFromPlace
+      ? `${saveCentre.lat.toFixed(4)}, ${saveCentre.lon.toFixed(4)}`
+      : place.label === 'My location'
+        ? 'My saved spot'
+        : place.label
+    const dates = Array.from({ length: SAVED_FORECAST_DAYS }, (_, day) => addDays(today, day))
+    setSaveError(null)
+    setSaving({ done: 0, total: 1 })
+    savePlaceOffline({ lat: saveCentre.lat, lon: saveCentre.lon, label, timezone }, dates, (done, total) =>
+      setSaving({ done, total }),
+    )
+      .then((record) => {
+        setSaved((list) => {
+          const next = withSavedPlace(list, record)
+          writeSavedPlaces(next)
+          return next
+        })
+      })
+      .catch((error: unknown) => {
+        const reason = error instanceof Error ? error.message : 'unknown error'
+        setSaveError(`Could not save this place (${reason}). Check the connection and try again.`)
+      })
+      .finally(() => setSaving(null))
+  }
+
+  const removeSaved = (removed: SavedPlace) => {
+    const remaining = saved.filter((other) => other.id !== removed.id)
+    setSaved(remaining)
+    writeSavedPlaces(remaining)
+    void forgetPlaceOffline(removed, remaining)
+  }
+
+  const openSaved = (target: SavedPlace) => {
+    setPoint(null)
+    setPlace({ lat: target.lat, lon: target.lon, label: target.label, timezone: target.timezone })
+  }
 
   const windowValid = endMin > startMin
   // Keep a usable window even while the inputs are mid-edit.
@@ -165,6 +255,7 @@ export default function App() {
           setPanelOpen(true)
         }}
         onBuildingsChange={setBuildings}
+        onViewChange={onViewChange}
       />
 
       <aside className={`panel${panelOpen ? '' : ' is-collapsed'}`} aria-label="Sunlight planner">
@@ -230,10 +321,44 @@ export default function App() {
             <section className="section">
               <h2 className="section__title">Where</h2>
               <SearchBox
+                near={place}
                 onSelect={setPlace}
                 onLocate={locate}
                 locating={geo.status === 'locating'}
                 locateMessage={geo.status === 'error' ? geo.message : null}
+              />
+              <p className="start-line">
+                <span>
+                  Opens at <strong>{start ? startChoiceLabel(start) : 'Athens until you choose'}</strong>
+                </span>
+                {!isStartPlace(start, place) && (
+                  <button
+                    type="button"
+                    className="link-btn"
+                    onClick={() =>
+                      chooseStart({
+                        mode: 'place',
+                        // A found position has no name of its own.
+                        place: { ...place, label: place.label === 'My location' ? 'My saved spot' : place.label },
+                      })
+                    }
+                  >
+                    Open here instead
+                  </button>
+                )}
+                <button type="button" className="link-btn" onClick={() => setAskStart(true)}>
+                  Change
+                </button>
+              </p>
+              <SavedPlaces
+                saved={saved}
+                centre={saveCentre}
+                saving={saving}
+                error={saveError}
+                online={online}
+                onSave={saveHere}
+                onOpen={openSaved}
+                onRemove={removeSaved}
               />
             </section>
 
@@ -334,6 +459,10 @@ export default function App() {
               <a href="https://open-meteo.com" target="_blank" rel="noreferrer">
                 Open-Meteo
               </a>{' '}
+              · search by{' '}
+              <a href="https://photon.komoot.io" target="_blank" rel="noreferrer">
+                Photon
+              </a>{' '}
               · terrain by{' '}
               <a
                 href="https://github.com/tilezen/joerd/blob/master/docs/attribution.md"
@@ -351,6 +480,8 @@ export default function App() {
           </div>
         </div>
       </aside>
+
+      {askStart && <StartPicker current={start} near={place} onChoose={chooseStart} onClose={() => setAskStart(false)} />}
     </div>
   )
 }

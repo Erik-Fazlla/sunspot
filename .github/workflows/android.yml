@@ -1,0 +1,82 @@
+name: Android APK
+
+# Builds the Android app. Pushing a tag such as v1.0.0 also publishes the APK
+# on a GitHub Release; a manual run only keeps it as a workflow artifact.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: npm ci
+      - run: npm test
+
+      - name: Build the web app for the APK
+        # Inside the APK the files sit next to index.html, so paths are relative.
+        run: npx tsc -b && npx vite build --base=./
+        env:
+          # Not the website's key: inside the APK the page's address is
+          # https://localhost, so a key restricted to the website would be refused.
+          VITE_ESRI_KEY: ${{ secrets.VITE_ESRI_KEY_ANDROID }}
+      - run: npx cap sync android
+
+      - name: Version
+        # Android only installs an update when the version code goes up; the run number always does.
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then name="${GITHUB_REF_NAME#v}"; else name="0.0.$GITHUB_RUN_NUMBER"; fi
+          echo "SUNSPOT_VERSION_NAME=$name" >> "$GITHUB_ENV"
+          echo "SUNSPOT_VERSION_CODE=$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
+
+      - name: Signing key
+        # Without the keystore secret the build falls back to a debug APK (see README).
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/sunspot.jks"
+            echo "SUNSPOT_KEYSTORE=$RUNNER_TEMP/sunspot.jks" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build the APK
+        working-directory: android
+        env:
+          SUNSPOT_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          SUNSPOT_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          SUNSPOT_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          chmod +x gradlew
+          mkdir -p "$GITHUB_WORKSPACE/apk"
+          if [ -n "$SUNSPOT_KEYSTORE" ]; then
+            ./gradlew assembleRelease --console=plain
+            cp app/build/outputs/apk/release/app-release.apk "$GITHUB_WORKSPACE/apk/sunspot-$SUNSPOT_VERSION_NAME.apk"
+          else
+            ./gradlew assembleDebug --console=plain
+            cp app/build/outputs/apk/debug/app-debug.apk "$GITHUB_WORKSPACE/apk/sunspot-$SUNSPOT_VERSION_NAME-debug.apk"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sunspot-apk
+          path: apk/*.apk
+
+      - name: Publish on the release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: apk/*.apk
+          generate_release_notes: true
