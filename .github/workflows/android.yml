@@ -5,9 +5,6 @@ name: Android APK
 on:
   push:
     tags: ['v*']
-    # Temporary: builds from this branch before it is merged, because a manual
-    # run needs the workflow file on main. Remove once merged.
-    branches: ['feat/android-apk']
   workflow_dispatch:
 
 permissions:
