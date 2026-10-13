@@ -3,6 +3,7 @@ import { BasemapControl, LayerToggles } from './components/LayerToggles'
 import { MapView, type Basemap, type LngLat } from './components/MapView'
 import { ResultCard } from './components/ResultCard'
 import { SearchBox } from './components/SearchBox'
+import { StartPicker } from './components/StartPicker'
 import { SunArc } from './components/SunArc'
 import { TimeControls } from './components/TimeControls'
 import { TimeSlider } from './components/TimeSlider'
@@ -21,6 +22,14 @@ import {
 } from './lib/constants'
 import { analyzePoint } from './lib/analysis'
 import { clampImageryOpacity, IMAGERY_DEFAULT_OPACITY } from './lib/imagery'
+import { currentPosition, LOCATION_MESSAGES, LocationError } from './lib/location'
+import {
+  isStartPlace,
+  readStartChoice,
+  startChoiceLabel,
+  writeStartChoice,
+  type StartChoice,
+} from './lib/startPlace'
 import { hourSunFactor } from './lib/sunFactor'
 import type { Place } from './lib/geocode'
 import type { Building } from './lib/shadow'
@@ -29,7 +38,10 @@ import { addDays, diffDays, formatDateLabel, formatMinutes, todayInTz, zonedToUt
 type GeoState = { status: 'idle' } | { status: 'locating' } | { status: 'error'; message: string }
 
 export default function App() {
-  const [place, setPlace] = useState<Place>(FALLBACK_PLACE)
+  // Where the map opens: the user's own choice, asked for on the first visit.
+  const [start, setStart] = useState<StartChoice | null>(readStartChoice)
+  const [askStart, setAskStart] = useState(start === null)
+  const [place, setPlace] = useState<Place>(start?.mode === 'place' ? start.place : FALLBACK_PLACE)
   const [geo, setGeo] = useState<GeoState>({ status: 'idle' })
   // null means "the default date": tomorrow, wherever the selected place is.
   const [pickedDate, setPickedDate] = useState<string | null>(null)
@@ -59,35 +71,34 @@ export default function App() {
   const forecast = useForecast(target.lat, target.lon, date, inForecastRange)
 
   const locate = useCallback(() => {
-    if (!('geolocation' in navigator)) {
-      setGeo({ status: 'error', message: 'This browser cannot share your location.' })
-      return
-    }
     setGeo({ status: 'locating' })
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        setPlace({
-          lat: position.coords.latitude,
-          lon: position.coords.longitude,
-          label: 'My location',
-        })
+    currentPosition().then(
+      ({ lat, lon }) => {
+        setPlace({ lat, lon, label: 'My location' })
         setGeo({ status: 'idle' })
       },
-      (error) => {
-        const message =
-          error.code === error.PERMISSION_DENIED
-            ? 'Location permission was denied, so the map stays where it is.'
-            : 'Could not get your location. Search for a place instead.'
+      (error: unknown) => {
+        const message = error instanceof LocationError ? error.message : LOCATION_MESSAGES.unavailable
         setGeo({ status: 'error', message })
       },
-      { timeout: 8000, maximumAge: 10 * 60 * 1000 },
     )
   }, [])
 
-  // Centre on the user when the app opens; Athens stays as the fallback.
+  // Opening the app only looks for the user when that is what they chose. A
+  // fixed start place is already on the map, and a first visit asks first.
   useEffect(() => {
-    locate()
-  }, [locate])
+    if (start?.mode === 'gps') locate()
+    // Only when the app opens; later changes go through `chooseStart`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const chooseStart = (choice: StartChoice) => {
+    writeStartChoice(choice)
+    setStart(choice)
+    setAskStart(false)
+    if (choice.mode === 'gps') locate()
+    else setPlace(choice.place)
+  }
 
   const windowValid = endMin > startMin
   // Keep a usable window even while the inputs are mid-edit.
@@ -235,6 +246,29 @@ export default function App() {
                 locating={geo.status === 'locating'}
                 locateMessage={geo.status === 'error' ? geo.message : null}
               />
+              <p className="start-line">
+                <span>
+                  Opens at <strong>{start ? startChoiceLabel(start) : 'Athens until you choose'}</strong>
+                </span>
+                {!isStartPlace(start, place) && (
+                  <button
+                    type="button"
+                    className="link-btn"
+                    onClick={() =>
+                      chooseStart({
+                        mode: 'place',
+                        // A found position has no name of its own.
+                        place: { ...place, label: place.label === 'My location' ? 'My saved spot' : place.label },
+                      })
+                    }
+                  >
+                    Open here instead
+                  </button>
+                )}
+                <button type="button" className="link-btn" onClick={() => setAskStart(true)}>
+                  Change
+                </button>
+              </p>
             </section>
 
             <section className="section">
@@ -351,6 +385,8 @@ export default function App() {
           </div>
         </div>
       </aside>
+
+      {askStart && <StartPicker current={start} onChoose={chooseStart} onClose={() => setAskStart(false)} />}
     </div>
   )
 }

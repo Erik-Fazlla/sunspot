@@ -17,6 +17,7 @@
   "dependencies": {
     "@capacitor/android": "^8.5.3",
     "@capacitor/core": "^8.5.3",
+    "@capacitor/geolocation": "^8.2.3",
     "@turf/boolean-point-in-polygon": "^7.4.0",
     "@turf/helpers": "^7.4.0",
     "@turf/union": "^7.4.0",
