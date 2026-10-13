@@ -43,13 +43,21 @@ jobs:
           echo "SUNSPOT_VERSION_CODE=$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
 
       - name: Signing key
-        # Without the keystore secret the build falls back to a debug APK (see README).
+        # All four secrets present: a release APK signed with the project's own
+        # key, which installs over earlier releases. Any of them missing: a
+        # debug APK, so the build still succeeds (see README).
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          if [ -n "$KEYSTORE_BASE64" ]; then
+          if [ -n "$KEYSTORE_BASE64" ] && [ -n "$KEYSTORE_PASSWORD" ] && [ -n "$KEY_ALIAS" ] && [ -n "$KEY_PASSWORD" ]; then
             echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/sunspot.jks"
             echo "SUNSPOT_KEYSTORE=$RUNNER_TEMP/sunspot.jks" >> "$GITHUB_ENV"
+            echo "Signing: release key" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Signing: debug key (one or more ANDROID_* secrets are not set). This APK will not install over a release-signed one." >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Build the APK
