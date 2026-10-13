@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { LOCATION_MESSAGES, LocationError, locationFailure } from './location'
+import { failureDetail, LOCATION_MESSAGES, LocationError, locationFailure } from './location'
 
 describe('locationFailure', () => {
   it('reads a browser permission refusal (code 1) as denied', () => {
@@ -21,6 +21,22 @@ describe('locationFailure', () => {
     expect(locationFailure({ code: 2, message: 'Position unavailable' })).toBe('unavailable')
     expect(locationFailure(null)).toBe('unavailable')
     expect(locationFailure('nope')).toBe('unavailable')
+  })
+})
+
+describe('the Android plugin’s own errors', () => {
+  it('are sorted into the same three reasons', () => {
+    expect(locationFailure(new Error('Location permission request was denied.'))).toBe('denied')
+    expect(locationFailure(new Error('Location services are not enabled.'))).toBe('switched-off')
+    expect(locationFailure(new Error('Could not obtain location in time. Try with a higher timeout.'))).toBe('unavailable')
+  })
+
+  it('keep their wording as the detail', () => {
+    expect(failureDetail(new Error(' Could not obtain location in time. '))).toBe('Could not obtain location in time.')
+    expect(failureDetail({ code: 3 })).toBeNull()
+    expect(failureDetail(null)).toBeNull()
+    expect(new LocationError('unavailable', 'timed out').detail).toBe('timed out')
+    expect(new LocationError('denied').detail).toBeNull()
   })
 })
 

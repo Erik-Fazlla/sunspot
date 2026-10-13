@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { formatStartChoice, isStartPlace, parseStartChoice, startChoiceLabel, type StartChoice } from './startPlace'
+import {
+  formatStartChoice,
+  isStartPlace,
+  parseLastPosition,
+  parseStartChoice,
+  startChoiceLabel,
+  type StartChoice,
+} from './startPlace'
 
 const ATHENS: StartChoice = {
   mode: 'place',
@@ -42,6 +49,18 @@ describe('parseStartChoice', () => {
   it('drops fields it does not know', () => {
     const stored = '{"mode":"place","extra":1,"place":{"lat":37,"lon":23,"label":"A","id":9,"timezone":5}}'
     expect(parseStartChoice(stored)).toEqual({ mode: 'place', place: { lat: 37, lon: 23, label: 'A' } })
+  })
+})
+
+describe('parseLastPosition', () => {
+  it('reads a stored position', () => {
+    expect(parseLastPosition('{"lat":37.98,"lon":23.73}')).toEqual({ lat: 37.98, lon: 23.73 })
+  })
+
+  it('ignores nothing, rubbish and impossible coordinates', () => {
+    for (const stored of [null, '', 'x', '{}', '{"lat":"37","lon":23}', '{"lat":97,"lon":23}', 'null']) {
+      expect(parseLastPosition(stored)).toBeNull()
+    }
   })
 })
 
