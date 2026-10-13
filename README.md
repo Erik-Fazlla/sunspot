@@ -64,7 +64,7 @@ The same view with **Sun hours** on, for an 11:00 to 17:00 window.
 | Satellite imagery (optional) | [Esri World Imagery](https://www.arcgis.com/home/item.html?id=10df2279f9684e4a9f6a7f08febac2a9) |
 | Terrain (optional) | [AWS Terrain Tiles](https://registry.opendata.aws/terrain-tiles/), Mapzen terrarium elevation tiles |
 | Forecast | [Open-Meteo forecast API](https://open-meteo.com/en/docs) |
-| Place search | [Open-Meteo geocoding API](https://open-meteo.com/en/docs/geocoding-api) |
+| Place search | [Photon](https://photon.komoot.io) by komoot (OpenStreetMap data: cities, streets and addresses, in any language); falls back to the [Open-Meteo geocoding API](https://open-meteo.com/en/docs/geocoding-api) (cities only) if Photon is unreachable |
 | Geometry | [turf](https://turfjs.org/) (union, point-in-polygon) |
 
 ### Shadow maths
@@ -497,7 +497,7 @@ Map data © [OpenStreetMap](https://www.openstreetmap.org/copyright)
 contributors, available under the
 [Open Database License (ODbL)](https://opendatacommons.org/licenses/odbl/).
 Tiles and style by [OpenFreeMap](https://openfreemap.org/)
-(© OpenMapTiles). Weather and geocoding by [Open-Meteo](https://open-meteo.com/).
+(© OpenMapTiles). Weather by [Open-Meteo](https://open-meteo.com/). Place search by [Photon](https://photon.komoot.io) (komoot), on OpenStreetMap data.
 Terrain from [AWS Terrain Tiles](https://registry.opendata.aws/terrain-tiles/)
 (Mapzen), built from the sources listed in the
 [Tilezen Joerd attribution](https://github.com/tilezen/joerd/blob/master/docs/attribution.md).

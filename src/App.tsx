@@ -251,6 +251,7 @@ export default function App() {
             <section className="section">
               <h2 className="section__title">Where</h2>
               <SearchBox
+                near={place}
                 onSelect={setPlace}
                 onLocate={locate}
                 locating={geo.status === 'locating'}
@@ -378,6 +379,10 @@ export default function App() {
               <a href="https://open-meteo.com" target="_blank" rel="noreferrer">
                 Open-Meteo
               </a>{' '}
+              · search by{' '}
+              <a href="https://photon.komoot.io" target="_blank" rel="noreferrer">
+                Photon
+              </a>{' '}
               · terrain by{' '}
               <a
                 href="https://github.com/tilezen/joerd/blob/master/docs/attribution.md"
@@ -396,7 +401,7 @@ export default function App() {
         </div>
       </aside>
 
-      {askStart && <StartPicker current={start} onChoose={chooseStart} onClose={() => setAskStart(false)} />}
+      {askStart && <StartPicker current={start} near={place} onChoose={chooseStart} onClose={() => setAskStart(false)} />}
     </div>
   )
 }
