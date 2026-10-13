@@ -28,3 +28,11 @@ dist-ssr
 
 # Playwright MCP scratch output
 .playwright-mcp
+
+# Android signing keys must never be committed. The real one lives outside
+# this folder; these lines are a second lock.
+*.jks
+*.keystore
+*.p12
+keystore.properties
+ANDROID_*.txt

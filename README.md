@@ -460,7 +460,7 @@ run number, which always rises).
 - **Without a signing key** the workflow builds a *debug* APK. GitHub signs it
   with a throwaway key that changes on every run, so a newer debug APK cannot
   be installed over an older one: uninstall first.
-- **With a signing key** it builds a proper release APK that updates in place.
+- **With a signing key** (all four secrets set; if any is missing the build quietly stays a debug build) it builds a proper release APK that updates in place.
   Create one keystore, keep a backup somewhere safe, and add four repository
   secrets under **Settings > Secrets and variables > Actions**:
 
