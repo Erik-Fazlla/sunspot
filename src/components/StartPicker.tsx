@@ -4,6 +4,8 @@ import { SearchBox } from './SearchBox'
 interface Props {
   /** The choice in force now; null the first time the app is opened. */
   current: StartChoice | null
+  /** Where the map is; search results around it come first. */
+  near?: { lat: number; lon: number }
   onChoose: (choice: StartChoice) => void
   /** Leave without choosing. */
   onClose: () => void
@@ -13,7 +15,7 @@ interface Props {
  * Asks where the map should open each time: wherever the user is, or one
  * place they pick. Shown once on the first visit and again from "Where".
  */
-export function StartPicker({ current, onChoose, onClose }: Props) {
+export function StartPicker({ current, near, onChoose, onClose }: Props) {
   const useLocation = () => onChoose({ mode: 'gps' })
   return (
     <div className="start" role="dialog" aria-modal="true" aria-labelledby="start-title">
@@ -38,6 +40,7 @@ export function StartPicker({ current, onChoose, onClose }: Props) {
 
         <p className="start__or">or always open at one place</p>
         <SearchBox
+          near={near}
           onSelect={(place) => onChoose({ mode: 'place', place })}
           onLocate={useLocation}
           locating={false}

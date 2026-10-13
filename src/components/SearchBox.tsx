@@ -11,13 +11,20 @@ type SearchState =
   | { status: 'ready'; results: PlaceResult[] }
 
 interface Props {
+  /** Where the map is; places around it are listed first. */
+  near?: Pick<Place, 'lat' | 'lon'>
   onSelect: (place: Place) => void
   onLocate: () => void
   locating: boolean
   locateMessage: string | null
 }
 
-export function SearchBox({ onSelect, onLocate, locating, locateMessage }: Props) {
+export function SearchBox({ near, onSelect, onLocate, locating, locateMessage }: Props) {
+  // Read when a search starts; moving the map must not rerun the search by itself.
+  const nearRef = useRef(near)
+  useEffect(() => {
+    nearRef.current = near
+  })
   const [query, setQuery] = useState('')
   const [state, setState] = useState<SearchState>({ status: 'idle' })
   const [open, setOpen] = useState(false)
@@ -33,7 +40,7 @@ export function SearchBox({ onSelect, onLocate, locating, locateMessage }: Props
     const controller = new AbortController()
     const timer = setTimeout(() => {
       setState({ status: 'loading' })
-      searchPlaces(trimmed, controller.signal)
+      searchPlaces(trimmed, controller.signal, nearRef.current)
         .then((results) => setState({ status: 'ready', results }))
         .catch((error: unknown) => {
           if (controller.signal.aborted) return
@@ -77,7 +84,7 @@ export function SearchBox({ onSelect, onLocate, locating, locateMessage }: Props
           <input
             type="search"
             value={query}
-            placeholder="Search a city or area"
+            placeholder="Search a city, area or street"
             autoComplete="off"
             onChange={(event) => {
               setQuery(event.target.value)
