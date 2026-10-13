@@ -26,6 +26,10 @@ service, so it costs nothing to host.
   cloud cuts the sun to 28% of clear-sky strength, so the light is mostly
   diffuse: only about 11 min of direct sun."
 - Sunrise, sunset and the sun's height through the day.
+- A **start place**. The first time it opens, the app asks where the map should
+  open from then on: wherever you are, or one place you pick. The answer is
+  kept on the device (`sunspot:start` in `localStorage`) and can be changed
+  under "Where".
 - A **Map / Satellite** switch. Map is a quiet drawn basemap with no shop or
   restaurant icons. Satellite puts a real aerial photo under the computed
   shadows, with an opacity slider so the shadows stay readable.
@@ -60,7 +64,7 @@ The same view with **Sun hours** on, for an 11:00 to 17:00 window.
 | Satellite imagery (optional) | [Esri World Imagery](https://www.arcgis.com/home/item.html?id=10df2279f9684e4a9f6a7f08febac2a9) |
 | Terrain (optional) | [AWS Terrain Tiles](https://registry.opendata.aws/terrain-tiles/), Mapzen terrarium elevation tiles |
 | Forecast | [Open-Meteo forecast API](https://open-meteo.com/en/docs) |
-| Place search | [Open-Meteo geocoding API](https://open-meteo.com/en/docs/geocoding-api) |
+| Place search | [Photon](https://photon.komoot.io) by komoot (OpenStreetMap data: cities, streets and addresses, in any language); falls back to the [Open-Meteo geocoding API](https://open-meteo.com/en/docs/geocoding-api) (cities only) if Photon is unreachable |
 | Geometry | [turf](https://turfjs.org/) (union, point-in-polygon) |
 
 ### Shadow maths
@@ -319,6 +323,46 @@ UTC instants only for the sun calculations (`src/lib/time.ts`).
 Forecast responses are cached in memory per (latitude, longitude, date), with
 coordinates rounded to 0.01 degrees. The cache lasts until the page reloads.
 
+### Saved places and offline use
+
+**Save this place for offline** (under "Where") keeps everything needed for
+the area about 1.2 km around the middle of the map on the device:
+
+- the **map tiles** covering it at every zoom (they carry the buildings, so
+  shade, the sun path and sun hours all work, for any date and time);
+- the map's **style, icons and fonts** (Latin, Greek and punctuation);
+- the **forecast** for today and the next six days.
+
+A saved place is about 3 to 6 MB in a city. Saved places are listed under the
+button; tapping one opens it, and removing one deletes its files except those
+another saved place still needs.
+
+How it works (`src/lib/mapCache.ts`, `src/lib/offlineArea.ts`,
+`src/lib/savedPlaces.ts`): every request to the map's tile server is rewritten
+to a custom `ofm://` address and answered by a MapLibre protocol handler that
+looks in the browser's Cache Storage first.
+
+| File | Order |
+| --- | --- |
+| Map tiles, fonts, icons | Device first, then the network |
+| Style and tile index | Network first (so a new map release is noticed), device if the network does not answer within 2.5 s |
+
+There are two stores: **saved** (files of saved places, only removed with the
+place) and **recent** (whatever the map loaded lately, the oldest dropped
+beyond 600 files). Tiles are stored without the release date that is part of
+their address, so a place saved under one map release is still found after the
+server moves to the next. The **recent** store is also why the map opens faster
+the second time: an area you have looked at is drawn from the device.
+
+Forecasts are kept as they are fetched. When the network does not answer, the
+kept copy is used and the weather panel says when it was saved.
+
+Not available offline: areas that were not saved, the search, the satellite
+photo (Esri's terms do not allow storing it), terrain, and labels in scripts
+other than Latin and Greek. A saved forecast only covers the seven days from
+the day it was saved. Storage belongs to the browser or the app: clearing site
+data, or uninstalling the app, removes saved places.
+
 ## Setup
 
 Requires Node.js 20 or newer.
@@ -341,6 +385,8 @@ Then open the URL Vite prints (http://localhost:5173 by default).
 | `npm run test:watch` | Run the tests in watch mode |
 | `npm run typecheck` | Type-check only |
 | `npm run lint` | Lint with oxlint |
+| `npm run build:android` | Build the web app for the APK and copy it into `android/` |
+| `npm run icons` | Redraw the app icon and regenerate every Android icon and splash size |
 
 The tests cover the azimuth conversion, shadow length and direction, shadow
 polygons, the point-in-shade test, the weather label rules, sunFactor and the
@@ -364,6 +410,84 @@ custom domain or a user page served from `/`, remove the `BASE_PATH` line.
 
 GitHub Pages is free for public repositories. For a private repository it needs
 a paid GitHub plan.
+
+## Android app
+
+The Android app is the same web build packed into an APK with
+[Capacitor](https://capacitorjs.com): the files of `dist/` travel inside the
+APK and are shown in a full-screen WebView. There is no second codebase. The
+native project lives in `android/`, and `capacitor.config.ts` names the app
+(`io.github.erikfazlla.sunspot`).
+
+**What works without a connection:** the app itself opens, because its code is
+inside the APK, and so does every place saved with "Save this place for
+offline" (see "Saved places and offline use" above). Unsaved areas, the search
+and the satellite photo need a connection.
+
+**Icon.** `scripts/make-app-icons.mjs` draws the icon (a sun, a building seen
+from above and its blue shade) and `npm run icons` regenerates every Android
+size from it.
+
+### Building it on your machine
+
+You need the Android SDK and a full **JDK 21** (the JDK must include `jlink`;
+a bare Java runtime is not enough).
+
+```bash
+npm run build:android
+cd android
+./gradlew assembleDebug
+```
+
+The APK appears in `android/app/build/outputs/apk/debug/`. `build:android`
+builds with `--base=./`, because inside the APK the files sit next to
+`index.html` rather than under `/sunspot/`.
+
+### Building it on GitHub
+
+`.github/workflows/android.yml` builds the APK on GitHub's machines:
+
+- **Run it by hand** from the **Actions** tab to get the APK as a downloadable
+  workflow artifact.
+- **Push a tag** such as `v1.0.0` to also publish the APK on a GitHub Release.
+
+### Signing, and why it matters
+
+Android installs an update over an existing copy only if both were signed with
+the same key and the new one has a higher version code (the workflow uses its
+run number, which always rises).
+
+- **Without a signing key** the workflow builds a *debug* APK. GitHub signs it
+  with a throwaway key that changes on every run, so a newer debug APK cannot
+  be installed over an older one: uninstall first.
+- **With a signing key** it builds a proper release APK that updates in place.
+  Create one keystore, keep a backup somewhere safe, and add four repository
+  secrets under **Settings > Secrets and variables > Actions**:
+
+  | Secret | Value |
+  | --- | --- |
+  | `ANDROID_KEYSTORE_BASE64` | The keystore file, base64-encoded |
+  | `ANDROID_KEYSTORE_PASSWORD` | The keystore password |
+  | `ANDROID_KEY_ALIAS` | The key's alias |
+  | `ANDROID_KEY_PASSWORD` | The key's password |
+
+  If the keystore is ever lost, updates can no longer be installed over the
+  app; everyone has to uninstall and install again.
+
+The keystore is never committed. Locally, `android/app/build.gradle` reads the
+same four values from the environment variables `SUNSPOT_KEYSTORE` (a file
+path), `SUNSPOT_KEYSTORE_PASSWORD`, `SUNSPOT_KEY_ALIAS` and
+`SUNSPOT_KEY_PASSWORD`.
+
+### Installing it
+
+Copy the APK to the phone and open it. Android asks once to allow installing
+from that source (the browser or the file manager).
+
+Location in the app goes through the Capacitor geolocation plugin
+(`src/lib/location.ts`), which asks Android directly; the website uses the
+browser's own request. The app only asks for location when you choose "Where I
+am" as the start place or press the locate button, and it works without it.
 
 ## Known limitations
 
@@ -413,7 +537,7 @@ Map data © [OpenStreetMap](https://www.openstreetmap.org/copyright)
 contributors, available under the
 [Open Database License (ODbL)](https://opendatacommons.org/licenses/odbl/).
 Tiles and style by [OpenFreeMap](https://openfreemap.org/)
-(© OpenMapTiles). Weather and geocoding by [Open-Meteo](https://open-meteo.com/).
+(© OpenMapTiles). Weather by [Open-Meteo](https://open-meteo.com/). Place search by [Photon](https://photon.komoot.io) (komoot), on OpenStreetMap data.
 Terrain from [AWS Terrain Tiles](https://registry.opendata.aws/terrain-tiles/)
 (Mapzen), built from the sources listed in the
 [Tilezen Joerd attribution](https://github.com/tilezen/joerd/blob/master/docs/attribution.md).

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  addProtocol,
   AttributionControl,
   Map as MapLibreMap,
   Marker,
@@ -28,6 +29,7 @@ import {
   TERRAIN_MAX_ZOOM,
   TERRAIN_TILES_URL,
 } from '../lib/constants'
+import { loadFromStore, STORE_PROTOCOL, toStoreUrl } from '../lib/mapCache'
 import { ESRI_ATTRIBUTION, esriImageryTileUrl, IMAGERY_MAX_ZOOM, imageryTone } from '../lib/imagery'
 import { SHADE_OPACITY, SUN_HOURS_OPACITY } from '../lib/overlay'
 import {
@@ -62,6 +64,17 @@ import { SunPathOverlay } from './SunPathOverlay'
 // Vite pre-bundles maplibre-gl, so its "worker next to the module" lookup
 // would miss. Point it at a worker bundle Vite builds for us.
 setWorkerUrl(workerUrl)
+
+// Map files are looked up on the device before the network (lib/mapCache.ts):
+// that is what makes the map quick to open and saved places work offline.
+addProtocol(STORE_PROTOCOL, loadFromStore)
+
+/**
+ * Phones report three or more device pixels per CSS pixel. Drawing a 3D map
+ * at that density costs far more than it shows; two is sharp enough.
+ */
+const MAX_PIXEL_RATIO = 2
+const pixelRatio = () => Math.min(window.devicePixelRatio, MAX_PIXEL_RATIO)
 
 const SHADOW_SOURCE = 'sunspot-shadows'
 const SHADOW_LAYER = 'sunspot-shadows'
@@ -163,6 +176,8 @@ interface Props {
   onPointSelect: (point: LngLat) => void
   /** Called with every building in the loaded tiles whenever that set changes. */
   onBuildingsChange: (buildings: Building[]) => void
+  /** Called with the middle of the map once it has stopped moving. */
+  onViewChange: (centre: LngLat) => void
 }
 
 export function MapView({
@@ -182,6 +197,7 @@ export function MapView({
   point,
   onPointSelect,
   onBuildingsChange,
+  onViewChange,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MapLibreMap | null>(null)
@@ -197,7 +213,7 @@ export function MapView({
   const paintHoursRef = useRef<() => void>(() => {})
   const signatureRef = useRef('')
   const drawRef = useRef<() => void>(() => {})
-  const callbacksRef = useRef({ onPointSelect, onBuildingsChange })
+  const callbacksRef = useRef({ onPointSelect, onBuildingsChange, onViewChange })
   const [hint, setHint] = useState<Hint>(null)
   const [ready, setReady] = useState(false)
   // The loaded map, for the overlay that draws on top of it.
@@ -205,7 +221,7 @@ export function MapView({
   const skyPhaseRef = useRef<SkyPhase | null>(null)
 
   useEffect(() => {
-    callbacksRef.current = { onPointSelect, onBuildingsChange }
+    callbacksRef.current = { onPointSelect, onBuildingsChange, onViewChange }
   })
 
   // Redraws the shadow layer for the current view and `sunTime`.
@@ -326,14 +342,19 @@ export function MapView({
       pitch: DEFAULT_PITCH,
       bearing: -18,
       maxPitch: MAX_PITCH,
-      // Render at the real screen resolution so lines and labels stay sharp on HiDPI displays.
-      pixelRatio: window.devicePixelRatio,
+      // Render at the screen's resolution (up to a limit) so lines and labels stay sharp.
+      pixelRatio: pixelRatio(),
+      // Send tile-server requests through the on-device store.
+      transformRequest: (url) => {
+        const stored = toStoreUrl(url)
+        return stored ? { url: stored } : undefined
+      },
       attributionControl: false,
     })
     // The ratio changes when the window moves to another screen or the page is zoomed.
     let ratioQuery: MediaQueryList | null = null
     const onRatioChange = () => {
-      map.setPixelRatio(window.devicePixelRatio)
+      map.setPixelRatio(pixelRatio())
       watchRatio()
     }
     const watchRatio = () => {
@@ -419,6 +440,7 @@ export function MapView({
         signatureRef.current = signature
         callbacksRef.current.onBuildingsChange(buildings)
       }
+      callbacksRef.current.onViewChange({ lat: mapCenter.lat, lon: mapCenter.lng })
       drawRef.current()
       paintHoursRef.current()
     }
